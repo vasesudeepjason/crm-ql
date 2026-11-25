@@ -1,62 +1,134 @@
 {% extends "base.html" %}
 {% block title %}{{ lead.name }} · Lead Desk{% endblock %}
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=4">
+<script src="{{ url_for('static', filename='records.js') }}?v=1" defer></script>
+{% endblock %}
+{% block main_class %}rc-page rc-detail{% endblock %}
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1 class="page-title">{{ lead.name }}</h1>
-    <p class="page-sub">
-      <span class="stage-pill stage-{{ lead.stage|slug }}">{{ lead.stage }}</span>
-      {% if lead.company_name %}<a href="{{ url_for('company_detail', company_id=lead.company_pk) }}" class="company-link">{{ lead.company_name }}</a>{% endif %}
-      {% if lead.interest_level %}<span class="interest-badge interest-{{ lead.interest_level|lower }}">{{ lead.interest_level }}</span>{% endif %}
-    </p>
+{% set words = lead.name.split() %}
+{% set closed = lead.stage in ['Won', 'Lost'] %}
+{% set overdue = lead.follow_up_date and lead.follow_up_date < today and not closed %}
+
+{% macro kv(label, value) %}
+<div class="rc-kv"><dt>{{ label }}</dt><dd>{% if caller %}{{ caller() }}{% else %}{{ value or '—' }}{% endif %}</dd></div>
+{% endmacro %}
+
+{% macro close_button() %}
+<button type="button" class="rc-dialog-close" data-close-dialog aria-label="Close">
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+</button>
+{% endmacro %}
+
+<nav class="rc-crumbs" aria-label="Breadcrumb">
+  <a href="{{ url_for('leads_list') }}">Leads</a><span aria-hidden="true">/</span><span>{{ lead.name }}</span>
+</nav>
+
+<div class="rc-header">
+  <div class="rc-title-block">
+    <span class="rc-avatar is-large" aria-hidden="true">{{ (words[0][:1] ~ (words[-1][:1] if words|length > 1 else ''))|upper }}</span>
+    <div>
+      <h1 class="rc-heading">{{ lead.name }}</h1>
+      <p class="rc-lede">
+        {% if lead.designation %}{{ lead.designation }}{% endif %}
+        {% if lead.designation and lead.company_name %} at {% endif %}
+        {% if lead.company_name %}<a href="{{ url_for('company_detail', company_id=lead.company_pk) }}" class="rc-link">{{ lead.company_name }}</a>{% endif %}
+        {% if not lead.designation and not lead.company_name %}No company linked yet{% endif %}
+      </p>
+    </div>
   </div>
-  <div class="header-actions">
+  <div class="rc-actions">
+    <button type="button" class="btn btn-primary btn-sm" data-open-dialog="editLeadDialog">Edit lead</button>
     {% if current_user.role == 'manager' and lead.stage == 'Won' %}<a class="btn btn-outline btn-sm" href="{{ url_for('project_new', lead_id=lead.id) }}">Create project</a>{% endif %}
-    {% if current_user.role in ['manager','field_sales'] %}<a class="btn btn-accent btn-sm" href="{{ url_for('field_visit_new', lead_id=lead.id) }}">{{ 'Assign visit' if current_user.role == 'manager' else 'Start visit' }}</a>{% endif %}
+    {% if current_user.role in ['manager','field_sales'] %}<a class="btn btn-outline btn-sm" href="{{ url_for('field_visit_new', lead_id=lead.id) }}">{{ 'Assign visit' if current_user.role == 'manager' else 'Start visit' }}</a>{% endif %}
     <form method="post" action="{{ url_for('delete_lead', lead_id=lead.id) }}" onsubmit="return confirm('Delete this lead permanently?')"><button type="submit" class="btn btn-danger btn-sm">Delete</button></form>
   </div>
 </div>
 
-<div class="detail-grid-wide">
-  <div>
-    <div class="card">
-      <h2 class="section-title">Identity</h2>
-      <div class="lead-meta-row"><span class="k">Company</span><span class="v">{% if lead.company_name %}<a href="{{ url_for('company_detail', company_id=lead.company_pk) }}">{{ lead.company_name }}</a>{% else %}—{% endif %}</span></div>
-      <div class="lead-meta-row"><span class="k">GBP Link</span><span class="v">{% if company and company.gbp_link %}<a href="{{ company.gbp_link }}" target="_blank" rel="noopener">{{ company.gbp_link }}</a>{% else %}—{% endif %}</span></div>
-      <div class="lead-meta-row"><span class="k">Contact</span><span class="v">{{ lead.name }}{% if lead.designation %} · {{ lead.designation }}{% endif %}</span></div>
-      <div class="lead-meta-row"><span class="k">Phone</span><span class="v">{{ lead.phone }}</span></div>
-      <div class="lead-meta-row"><span class="k">Alt. phone</span><span class="v">{{ lead.alternate_phone or '—' }}</span></div>
-      <div class="lead-meta-row"><span class="k">Email</span><span class="v">{{ lead.email or '—' }}</span></div>
-      <div class="lead-meta-row"><span class="k">Industry</span><span class="v">{{ lead.industry or '—' }}</span></div>
-      <div class="lead-meta-row"><span class="k">Source</span><span class="v">{{ lead.source or '—' }}</span></div>
-      <div class="lead-meta-row"><span class="k">Owner</span><span class="v">{{ lead.owner_name or 'Unassigned' }}</span></div>
-      <div class="lead-meta-row"><span class="k">Added</span><span class="v">{{ lead.created_at[:10] }}</span></div>
-    </div>
+<dl class="rc-facts">
+  <div><dt>Stage</dt><dd><span class="rc-stage rc-s-{{ lead.stage|slug }}"><i aria-hidden="true"></i>{{ lead.stage }}</span>{% if lead.stage == 'Lost' and lead.lost_reason %}<small>{{ lead.lost_reason }}</small>{% endif %}</dd></div>
+  <div><dt>Interest</dt><dd>{% if lead.interest_level %}<span class="rc-interest rc-in-{{ lead.interest_level|lower }}">{{ lead.interest_level }}</span>{% else %}<span class="rc-none">Not set</span>{% endif %}</dd></div>
+  <div><dt>Priority</dt><dd>{{ lead.priority or '—' }}</dd></div>
+  <div><dt>Follow-up</dt><dd>{% if lead.follow_up_date %}<span class="rc-follow{% if overdue %} is-overdue{% endif %}">{{ lead.follow_up_date }}{% if overdue %} · overdue{% elif lead.follow_up_date == today %} · today{% endif %}</span>{% else %}<span class="rc-none">None set</span>{% endif %}</dd></div>
+  <div><dt>Budget</dt><dd>{{ lead.budget_range or '—' }}</dd></div>
+  <div><dt>Owner</dt><dd>{{ 'You' if lead.owner_id == current_user.id else (lead.owner_name or 'Unassigned') }}</dd></div>
+</dl>
+
+<div class="rc-quick">
+  <a class="rc-quick-item" href="tel:{{ lead.phone }}">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M3 2.500h2.500l1 3-1.500 1a7 7 0 0 0 4.500 4.500l1-1.500 3 1V13a1 1 0 0 1-1 1A10.500 10.500 0 0 1 2 3.500a1 1 0 0 1 1-1Z"/></svg>{{ lead.phone }}
+  </a>
+  {% if lead.alternate_phone %}<a class="rc-quick-item" href="tel:{{ lead.alternate_phone }}">Alt: {{ lead.alternate_phone }}</a>{% endif %}
+  {% if lead.email %}
+  <a class="rc-quick-item" href="mailto:{{ lead.email }}">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><rect x="2" y="3.500" width="12" height="9" rx="1.500"/><path d="m2.500 4.500 5.500 4 5.500-4"/></svg>{{ lead.email }}
+  </a>
+  {% endif %}
+</div>
+
+<div class="rc-detail-grid">
+  <div class="rc-col">
+    <section class="rc-card" aria-labelledby="lead-details">
+      <header class="rc-card-head"><h2 id="lead-details">Lead details</h2><button type="button" class="rc-link" data-open-dialog="editLeadDialog">Edit</button></header>
+      <dl class="rc-kvs">
+        {% call kv('Company') %}{% if lead.company_name %}<a class="rc-link" href="{{ url_for('company_detail', company_id=lead.company_pk) }}">{{ lead.company_name }}</a>{% else %}—{% endif %}{% endcall %}
+        {{ kv('Industry', lead.industry) }}
+        {{ kv('Source', lead.source) }}
+        {{ kv('Decision maker', lead.decision_maker) }}
+        {{ kv('Estimated value', lead.estimated_project_value) }}
+        {{ kv('Expected timeline', lead.expected_timeline) }}
+        {{ kv('Added', lead.created_at[:10]) }}
+        {% call kv('Tags') %}{% if lead.tags %}<span class="rc-chips">{% for tag in lead.tags.split(',') if tag.strip() %}<span class="rc-chip">{{ tag.strip() }}</span>{% endfor %}</span>{% else %}—{% endif %}{% endcall %}
+        {% call kv('Google Business Profile') %}{% if company and company.gbp_link %}<a class="rc-link" href="{{ company.gbp_link }}" target="_blank" rel="noopener">Open profile</a>{% else %}—{% endif %}{% endcall %}
+      </dl>
+
+      <h3 class="rc-subhead">Online presence</h3>
+      <dl class="rc-kvs">
+        {% call kv('Website') %}{% if lead.website_url %}{{ lead.website_url }}{% if lead.website_status %} · {{ lead.website_status }}{% endif %}{% else %}{{ lead.website_status or '—' }}{% endif %}{% endcall %}
+        {{ kv('Website quality', lead.website_quality) }}
+        {{ kv('Google presence', lead.google_presence) }}
+        {{ kv('Social presence', lead.social_presence) }}
+      </dl>
+
+      <h3 class="rc-subhead">Services required</h3>
+      {% if services_selected %}
+      <p class="rc-chips">{% for s in services_selected %}<span class="rc-chip">{{ s }}</span>{% endfor %}</p>
+      {% if lead.other_service_description %}<p class="rc-note">{{ lead.other_service_description }}</p>{% endif %}
+      {% else %}<p class="rc-none rc-pad">None selected yet.</p>{% endif %}
+
+      {% if lead.qualification_notes or lead.requirement_notes or lead.internal_notes %}
+      <h3 class="rc-subhead">Notes</h3>
+      <div class="rc-notes">
+        {% if lead.qualification_notes %}<div><h4>Qualification</h4><p>{{ lead.qualification_notes }}</p></div>{% endif %}
+        {% if lead.requirement_notes %}<div><h4>Requirement</h4><p>{{ lead.requirement_notes }}</p></div>{% endif %}
+        {% if lead.internal_notes %}<div><h4>Internal</h4><p>{{ lead.internal_notes }}</p></div>{% endif %}
+      </div>
+      {% endif %}
+    </section>
 
     {% if lead.company_pk %}
-    <div class="card">
-      <h2 class="section-title">Contacts at {{ lead.company_name }}</h2>
-      <p class="page-sub">Everyone you've talked to at this company — including anyone added from this lead or from the company page.</p>
+    <section class="rc-card" aria-labelledby="lead-contacts">
+      <header class="rc-card-head"><h2 id="lead-contacts">Contacts at {{ lead.company_name }}</h2><button type="button" class="rc-link" data-open-dialog="contactDialog">Add contact</button></header>
       {% if company_contacts %}
-      <div class="table-card">
-        <table>
-          <thead><tr><th>Name</th><th>Designation</th><th>Phone</th><th>Email</th><th>LinkedIn</th><th></th></tr></thead>
+      <div class="rc-table-wrap is-flush">
+        <table class="rc-table is-compact">
+          <thead><tr><th>Name</th><th class="c-desig">Designation</th><th>Phone</th><th class="c-email">Email</th><th><span class="rc-sr">Actions</span></th></tr></thead>
           <tbody>
             {% for c in company_contacts %}
             <tr>
               <td>
-                {{ c.name }}
-                {% if c.is_primary %} <span class="owner-badge owner-self">Primary</span>{% endif %}
-                {% if c.id == lead.contact_id %} <span class="owner-badge">This lead</span>{% endif %}
+                <strong>{{ c.name }}</strong>
+                {% if c.is_primary %} <span class="rc-chip is-accent">Primary</span>{% endif %}
+                {% if c.id == lead.contact_id %} <span class="rc-chip">This lead</span>{% endif %}
+                {% if c.linkedin %} <a class="rc-link" href="{{ c.linkedin }}" target="_blank" rel="noopener">LinkedIn</a>{% endif %}
               </td>
-              <td>{{ c.designation or '—' }}</td>
-              <td class="phone">{{ c.phone or '—' }}</td>
-              <td>{{ c.email or '—' }}</td>
-              <td>{% if c.linkedin %}<a href="{{ c.linkedin }}" target="_blank" rel="noopener">Profile</a>{% else %}—{% endif %}</td>
-              <td>
+              <td class="c-desig">{{ c.designation or '—' }}</td>
+              <td>{% if c.phone %}<a class="rc-phone" href="tel:{{ c.phone }}">{{ c.phone }}</a>{% else %}—{% endif %}</td>
+              <td class="c-email">{{ c.email or '—' }}</td>
+              <td class="c-act">
                 <form method="post" action="{{ url_for('delete_contact', contact_id=c.id) }}" onsubmit="return confirm('Delete this contact?')">
                   <input type="hidden" name="next_lead_id" value="{{ lead.id }}">
-                  <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                  <button type="submit" class="rc-link is-danger">Delete</button>
                 </form>
               </td>
             </tr>
@@ -65,218 +137,50 @@
         </table>
       </div>
       {% else %}
-      <div class="empty-state">No contacts saved for this company yet.</div>
+      <p class="rc-none rc-pad">No contacts saved for this company yet.</p>
       {% endif %}
-
-      <details class="add-contact-details">
-        <summary>Add another contact at this company</summary>
-        <form method="post" action="{{ url_for('add_contact', company_id=lead.company_pk) }}" style="margin-top:14px;">
-          <input type="hidden" name="next_lead_id" value="{{ lead.id }}">
-          <div class="form-group"><label>Name *</label><input type="text" name="name" placeholder="Full name" required></div>
-          <div class="form-group"><label>Designation</label><input type="text" name="designation" placeholder="e.g. Procurement Manager"></div>
-          <div class="form-row">
-            <div class="form-group"><label>Phone</label><input type="text" name="phone" placeholder="Phone number"></div>
-            <div class="form-group"><label>Alternate Phone</label><input type="text" name="alternate_phone" placeholder="Second phone number"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Email</label><input type="email" name="email" placeholder="name@company.com"></div>
-            <div class="form-group"><label>LinkedIn</label><input type="text" name="linkedin" placeholder="linkedin.com/in/…"></div>
-          </div>
-          <label class="check-line"><input type="checkbox" name="is_primary" value="1"> Primary contact</label>
-          <div class="form-group"><label>Notes</label><textarea name="notes" placeholder="Add a note"></textarea></div>
-          <button type="submit" class="btn btn-accent">Add contact</button>
-        </form>
-      </details>
-    </div>
+    </section>
     {% else %}
-    <div class="card">
-      <h2 class="section-title">Contacts</h2>
-      <p class="page-sub">This lead isn't linked to a company yet, so there's no shared contact list for it. Link one below — it takes a second and unlocks adding other people at the same company.</p>
-      <form method="post" action="{{ url_for('link_company_to_lead', lead_id=lead.id) }}" id="linkCompanyForm">
-        <div class="form-group">
-          <label>Company name</label>
-          <input type="text" id="linkCompanyName" name="company_name" placeholder="Start typing to find or create…" autocomplete="off" required>
-          <input type="hidden" name="company_id" id="linkCompanyIdField">
-          <div id="linkCompanyMatches" class="match-panel" style="display:none"></div>
-        </div>
-        <button type="submit" class="btn btn-accent">Link company</button>
-      </form>
-    </div>
+    <section class="rc-card" aria-labelledby="lead-contacts">
+      <header class="rc-card-head"><h2 id="lead-contacts">Link a company</h2></header>
+      <div class="rc-card-body">
+        <p class="rc-help">This lead isn't linked to a company yet. Linking one gives it a shared contact list and puts it on the company's page.</p>
+        <form method="post" action="{{ url_for('link_company_to_lead', lead_id=lead.id) }}" id="linkCompanyForm" class="rc-inline-form">
+          <label class="rc-field">
+            <span>Company name</span>
+            <input type="text" id="linkCompanyName" name="company_name" placeholder="Start typing to find or create…" autocomplete="off" required>
+            <input type="hidden" name="company_id" id="linkCompanyIdField">
+            <div id="linkCompanyMatches" class="match-panel" style="display:none"></div>
+          </label>
+          <button type="submit" class="btn btn-primary btn-sm">Link company</button>
+        </form>
+      </div>
+    </section>
     {% endif %}
 
-    <div class="card">
-      <h2 class="section-title">Update lead</h2>
-      <form method="post" action="{{ url_for('update_lead', lead_id=lead.id) }}" id="updateLeadForm">
-        <div class="form-row">
-          <div class="form-group">
-            <label>Stage</label>
-            <select name="stage" id="stageSelect">
-              {% for stage in stages %}
-              <option value="{{ stage }}" {% if stage == lead.stage %}selected{% endif %}>{{ stage }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="form-group" id="lostReasonWrap" style="{% if lead.stage != 'Lost' %}display:none{% endif %}">
-            <label>Lost reason</label>
-            <select name="lost_reason">
-              <option value="">—</option>
-              {% for r in lost_reasons %}<option value="{{ r }}" {% if r == lead.lost_reason %}selected{% endif %}>{{ r }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Interest Level</label>
-            <select name="interest_level">
-              <option value="">—</option>
-              {% for o in interest_levels %}<option value="{{ o }}" {% if o == lead.interest_level %}selected{% endif %}>{{ o }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Priority</label>
-            <select name="priority">
-              <option value="">—</option>
-              {% for o in priorities %}<option value="{{ o }}" {% if o == lead.priority %}selected{% endif %}>{{ o }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Decision Maker</label>
-            <select name="decision_maker">
-              <option value="">—</option>
-              {% for o in decision_maker_opts %}<option value="{{ o }}" {% if o == lead.decision_maker %}selected{% endif %}>{{ o }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Budget Range</label>
-            <select name="budget_range">
-              <option value="">—</option>
-              {% for o in budget_ranges %}<option value="{{ o }}" {% if o == lead.budget_range %}selected{% endif %}>{{ o }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Follow-up date</label>
-            <input type="date" name="follow_up_date" value="{{ lead.follow_up_date or '' }}">
-          </div>
-          <div class="form-group"><label>Estimated Project Value</label><input type="text" name="estimated_project_value" placeholder="e.g. 75,000" value="{{ lead.estimated_project_value or '' }}"></div>
-          <div class="form-group"><label>Expected Timeline</label><input type="text" name="expected_timeline" placeholder="e.g. 4 weeks" value="{{ lead.expected_timeline or '' }}"></div>
-          <div class="form-group"><label>Industry</label><input type="text" name="industry" placeholder="e.g. Manufacturing" value="{{ lead.industry or '' }}"></div>
-          <div class="form-group"><label>Designation</label><input type="text" name="designation" placeholder="e.g. Operations Manager" value="{{ lead.designation or '' }}"></div>
-          <div class="form-group"><label>Alternate phone</label><input type="text" name="alternate_phone" placeholder="Second phone number" value="{{ lead.alternate_phone or '' }}"></div>
-          <div class="form-group">
-            <label>Tags</label>
-            <input type="text" name="tags" value="{{ lead.tags or '' }}" placeholder="comma separated">
-          </div>
-          <div class="form-group">
-            <label>Website Status</label>
-            <select name="website_status"><option value="">—</option>{% for o in website_status_opts %}<option value="{{ o }}" {% if o==lead.website_status %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
-          </div>
-          <div class="form-group"><label>Website URL</label><input type="text" name="website_url" placeholder="company.com" value="{{ lead.website_url or '' }}"></div>
-          <div class="form-group">
-            <label>Website Quality</label>
-            <select name="website_quality"><option value="">—</option>{% for o in website_quality_opts %}<option value="{{ o }}" {% if o==lead.website_quality %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
-          </div>
-          <div class="form-group">
-            <label>Google Presence</label>
-            <select name="google_presence"><option value="">—</option>{% for o in google_presence_opts %}<option value="{{ o }}" {% if o==lead.google_presence %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
-          </div>
-          <div class="form-group">
-            <label>Social Presence</label>
-            <select name="social_presence"><option value="">—</option>{% for o in social_presence_opts %}<option value="{{ o }}" {% if o==lead.social_presence %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
-          </div>
-        </div>
-
-        <h2 class="section-title" style="margin-top:14px;">Services required</h2>
-        <div class="checkbox-grid">
-          {% for s in services %}
-          <label class="check-line"><input type="checkbox" name="services_required" value="{{ s }}" class="service-check" {% if s in services_selected %}checked{% endif %}> {{ s }}</label>
-          {% endfor %}
-        </div>
-        <div class="form-group" id="otherServiceWrap" style="{% if 'Other' not in services_selected %}display:none{% endif %}">
-          <label>Other service description</label>
-          <input type="text" name="other_service_description" placeholder="Describe the service" value="{{ lead.other_service_description or '' }}">
-        </div>
-
-        <div class="form-row" style="margin-top:6px;">
-          <div class="form-group" style="flex-basis:100%">
-            <label>Qualification Notes</label>
-            <textarea name="qualification_notes" placeholder="What makes this lead a good fit?">{{ lead.qualification_notes or '' }}</textarea>
-          </div>
-          <div class="form-group" style="flex-basis:100%">
-            <label>Requirement Notes</label>
-            <textarea name="requirement_notes" placeholder="What does the client need?">{{ lead.requirement_notes or '' }}</textarea>
-          </div>
-          <div class="form-group" style="flex-basis:100%">
-            <label>Internal Notes</label>
-            <textarea name="internal_notes" placeholder="Context for your team">{{ lead.internal_notes or '' }}</textarea>
-          </div>
-        </div>
-        <button type="submit" class="btn btn-primary">Save changes</button>
-      </form>
-    </div>
-  </div>
-
-  <div>
-    {% if current_user.role == 'manager' and not lead.owner_id %}
-    <div class="card">
-      <h2 class="section-title">Assign owner</h2>
-      <form method="post" action="{{ url_for('assign_lead', lead_id=lead.id) }}" class="inline-form">
-        <select name="owner_id" onchange="this.form.requestSubmit()">
-          <option value="">Unassigned</option>
-          {% for tc in telecallers %}
-          <option value="{{ tc.id }}" {% if lead.owner_id == tc.id %}selected{% endif %}>{{ tc.name }}</option>
-          {% endfor %}
-        </select>
-      </form>
-      <p class="page-sub">This lead has no owner yet — pick who it belongs to.</p>
-    </div>
-    {% endif %}
-
-    <div class="card">
-      <h2 class="section-title">Owner</h2>
-      <p class="page-sub">{{ lead.owner_name or 'Unassigned' }}{% if lead.owner_id %} keeps this lead — sharing below only grants extra access, it never moves ownership.{% endif %}</p>
-    </div>
-
-    {% if is_owner %}
-    <div class="card">
-      <h2 class="section-title">Share access</h2>
-      <p class="page-sub">Give someone else view + edit access to this lead. It stays yours — this doesn't hand it over or create a copy.</p>
-      {% if shared_with %}
-      <ul class="share-list">
-        {% for person in shared_with %}
+    <section class="rc-card" aria-labelledby="lead-timeline">
+      <header class="rc-card-head"><h2 id="lead-timeline">Timeline</h2></header>
+      {% if timeline_events %}
+      <ol class="rc-timeline">
+        {% for ev in timeline_events %}
         <li>
-          <span>{{ person.name }} <span class="owner-badge">{{ person.role }}</span></span>
-          <form method="post" action="{{ url_for('unshare_lead', lead_id=lead.id, user_id=person.user_id) }}" class="inline-form">
-            <button type="submit" class="btn btn-link">Revoke</button>
-          </form>
+          <p><strong>{{ ev.event }}</strong>{% if ev.detail %} <span>{{ ev.detail }}</span>{% endif %}</p>
+          <small>{{ ev.user_name or 'System' }} · {{ ev.created_at }}</small>
         </li>
         {% endfor %}
-      </ul>
+      </ol>
+      {% else %}
+      <p class="rc-none rc-pad">No activity logged yet.</p>
       {% endif %}
-      {% if shareable_users %}
-      <form method="post" action="{{ url_for('share_lead', lead_id=lead.id) }}" class="inline-form">
-        <select name="user_id">
-          {% for u in shareable_users %}
-          <option value="{{ u.id }}">{{ u.name }} ({{ u.role }})</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn btn-secondary">Share</button>
-      </form>
-      {% endif %}
-    </div>
-    {% elif shared_with %}
-    <div class="card">
-      <h2 class="section-title">Shared with</h2>
-      <ul class="share-list">
-        {% for person in shared_with %}
-        <li><span>{{ person.name }} <span class="owner-badge">{{ person.role }}</span></span></li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
+    </section>
+  </div>
 
-    <div class="card">
-      <h2 class="section-title">Log a call</h2>
-      <form method="post" action="{{ url_for('add_call_log', lead_id=lead.id) }}">
-        <div class="form-group">
-          <label>Outcome</label>
+  <div class="rc-col">
+    <section class="rc-card" aria-labelledby="lead-call">
+      <header class="rc-card-head"><h2 id="lead-call">Log a call</h2></header>
+      <form method="post" action="{{ url_for('add_call_log', lead_id=lead.id) }}" class="rc-card-body rc-stack">
+        <label class="rc-field">
+          <span>Outcome</span>
           <select name="outcome">
             <option>Answered</option>
             <option>No answer</option>
@@ -284,62 +188,212 @@
             <option>Not interested</option>
             <option>Wrong number</option>
           </select>
-        </div>
-        <div class="form-group">
-          <label>Note</label>
-          <textarea name="note" placeholder="What happened on this call?"></textarea>
-        </div>
-        <button type="submit" class="btn btn-accent">Save call log</button>
+        </label>
+        <label class="rc-field">
+          <span>Note</span>
+          <textarea name="note" rows="3" placeholder="What happened on this call?"></textarea>
+        </label>
+        <button type="submit" class="btn btn-primary btn-sm">Save call log</button>
       </form>
-    </div>
+    </section>
 
-    <div class="card">
-      <h2 class="section-title">Lead timeline</h2>
-      {% if timeline_events %}
-        <div class="lead-timeline">
-        {% for ev in timeline_events %}
-        <div class="timeline-entry">
-          <div class="timeline-time">{{ ev.created_at }}</div>
-          <div class="timeline-body">
-            <span class="timeline-event">{{ ev.event }}</span>
-            {% if ev.detail %}<span class="timeline-detail">{{ ev.detail }}</span>{% endif %}
-            <span class="timeline-user">— {{ ev.user_name or 'System' }}</span>
-          </div>
-        </div>
-        {% endfor %}
-        </div>
-      {% else %}
-        <div class="empty-state">No activity logged yet.</div>
-      {% endif %}
-    </div>
-
-    <div class="card">
-      <h2 class="section-title">Call history</h2>
+    <section class="rc-card" aria-labelledby="lead-calls">
+      <header class="rc-card-head"><h2 id="lead-calls">Call history</h2><span class="rc-count">{{ call_logs|length }}</span></header>
       {% if call_logs %}
+      <ol class="rc-timeline">
         {% for log in call_logs %}
-        <div class="call-entry">
-          <div class="call-entry-head">
-            <span class="call-entry-outcome">{{ log.outcome or 'Logged' }}</span>
-            <span class="call-entry-time">{{ log.created_at }}</span>
-          </div>
-          {% if log.note %}<div class="call-entry-note">{{ log.note }}</div>{% endif %}
-        </div>
+        <li>
+          <p><strong>{{ log.outcome or 'Logged' }}</strong></p>
+          {% if log.note %}<p class="rc-timeline-note">{{ log.note }}</p>{% endif %}
+          <small>{{ log.created_at }}</small>
+        </li>
         {% endfor %}
+      </ol>
       {% else %}
-        <div class="empty-state">No calls logged yet.</div>
+      <p class="rc-none rc-pad">No calls logged yet.</p>
       {% endif %}
-    </div>
+    </section>
+
+    <section class="rc-card" aria-labelledby="lead-access">
+      <header class="rc-card-head"><h2 id="lead-access">Owner and access</h2></header>
+      <div class="rc-card-body rc-stack">
+        <p class="rc-help"><strong>{{ lead.owner_name or 'Unassigned' }}</strong>{% if lead.owner_id %} owns this lead. Sharing gives someone else access; it never moves ownership.{% endif %}</p>
+
+        {% if current_user.role == 'manager' and not lead.owner_id %}
+        <form method="post" action="{{ url_for('assign_lead', lead_id=lead.id) }}">
+          <label class="rc-field">
+            <span>Assign an owner</span>
+            <select name="owner_id" onchange="this.form.requestSubmit()">
+              <option value="">Unassigned</option>
+              {% for tc in telecallers %}
+              <option value="{{ tc.id }}" {% if lead.owner_id == tc.id %}selected{% endif %}>{{ tc.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
+        {% endif %}
+
+        {% if shared_with %}
+        <ul class="rc-share">
+          {% for person in shared_with %}
+          <li>
+            <span>{{ person.name }} <span class="rc-chip">{{ person.role }}</span></span>
+            {% if is_owner %}
+            <form method="post" action="{{ url_for('unshare_lead', lead_id=lead.id, user_id=person.user_id) }}">
+              <button type="submit" class="rc-link is-danger">Revoke</button>
+            </form>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if is_owner and shareable_users %}
+        <form method="post" action="{{ url_for('share_lead', lead_id=lead.id) }}" class="rc-inline-form">
+          <label class="rc-field">
+            <span>Share with</span>
+            <select name="user_id">
+              {% for u in shareable_users %}
+              <option value="{{ u.id }}">{{ u.name }} ({{ u.role }})</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit" class="btn btn-outline btn-sm">Share</button>
+        </form>
+        {% endif %}
+      </div>
+    </section>
   </div>
 </div>
+
+<dialog class="rc-dialog is-wide" id="editLeadDialog" aria-labelledby="editLeadTitle">
+  <form method="post" action="{{ url_for('update_lead', lead_id=lead.id) }}" id="updateLeadForm" class="rc-dialog-form">
+    <header class="rc-dialog-head"><h2 id="editLeadTitle">Edit lead</h2>{{ close_button() }}</header>
+    <div class="rc-dialog-body">
+      <fieldset class="rc-fieldset">
+        <legend>Pipeline</legend>
+        <div class="rc-grid is-three">
+          <label class="rc-field"><span>Stage</span>
+            <select name="stage" id="stageSelect">
+              {% for stage in stages %}<option value="{{ stage }}" {% if stage == lead.stage %}selected{% endif %}>{{ stage }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field" id="lostReasonWrap" style="{% if lead.stage != 'Lost' %}display:none{% endif %}"><span>Lost reason</span>
+            <select name="lost_reason">
+              <option value="">—</option>
+              {% for r in lost_reasons %}<option value="{{ r }}" {% if r == lead.lost_reason %}selected{% endif %}>{{ r }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field"><span>Interest level</span>
+            <select name="interest_level">
+              <option value="">—</option>
+              {% for o in interest_levels %}<option value="{{ o }}" {% if o == lead.interest_level %}selected{% endif %}>{{ o }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field"><span>Priority</span>
+            <select name="priority">
+              <option value="">—</option>
+              {% for o in priorities %}<option value="{{ o }}" {% if o == lead.priority %}selected{% endif %}>{{ o }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field"><span>Follow-up date</span><input type="date" name="follow_up_date" value="{{ lead.follow_up_date or '' }}"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="rc-fieldset">
+        <legend>Qualification</legend>
+        <div class="rc-grid is-three">
+          <label class="rc-field"><span>Decision maker</span>
+            <select name="decision_maker">
+              <option value="">—</option>
+              {% for o in decision_maker_opts %}<option value="{{ o }}" {% if o == lead.decision_maker %}selected{% endif %}>{{ o }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field"><span>Budget range</span>
+            <select name="budget_range">
+              <option value="">—</option>
+              {% for o in budget_ranges %}<option value="{{ o }}" {% if o == lead.budget_range %}selected{% endif %}>{{ o }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field"><span>Estimated project value</span><input type="text" name="estimated_project_value" placeholder="e.g. 75,000" value="{{ lead.estimated_project_value or '' }}"></label>
+          <label class="rc-field"><span>Expected timeline</span><input type="text" name="expected_timeline" placeholder="e.g. 4 weeks" value="{{ lead.expected_timeline or '' }}"></label>
+          <label class="rc-field"><span>Industry</span><input type="text" name="industry" placeholder="e.g. Manufacturing" value="{{ lead.industry or '' }}"></label>
+          <label class="rc-field"><span>Designation</span><input type="text" name="designation" placeholder="e.g. Operations Manager" value="{{ lead.designation or '' }}"></label>
+          <label class="rc-field"><span>Alternate phone</span><input type="tel" name="alternate_phone" placeholder="Second phone number" value="{{ lead.alternate_phone or '' }}"></label>
+          <label class="rc-field"><span>Tags</span><input type="text" name="tags" value="{{ lead.tags or '' }}" placeholder="comma separated"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="rc-fieldset">
+        <legend>Online presence</legend>
+        <div class="rc-grid is-three">
+          <label class="rc-field"><span>Website status</span>
+            <select name="website_status"><option value="">—</option>{% for o in website_status_opts %}<option value="{{ o }}" {% if o==lead.website_status %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+          </label>
+          <label class="rc-field"><span>Website URL</span><input type="text" name="website_url" placeholder="company.com" value="{{ lead.website_url or '' }}"></label>
+          <label class="rc-field"><span>Website quality</span>
+            <select name="website_quality"><option value="">—</option>{% for o in website_quality_opts %}<option value="{{ o }}" {% if o==lead.website_quality %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+          </label>
+          <label class="rc-field"><span>Google presence</span>
+            <select name="google_presence"><option value="">—</option>{% for o in google_presence_opts %}<option value="{{ o }}" {% if o==lead.google_presence %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+          </label>
+          <label class="rc-field"><span>Social presence</span>
+            <select name="social_presence"><option value="">—</option>{% for o in social_presence_opts %}<option value="{{ o }}" {% if o==lead.social_presence %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="rc-fieldset">
+        <legend>Services required</legend>
+        <div class="rc-checks">
+          {% for s in services %}
+          <label class="rc-check"><input type="checkbox" name="services_required" value="{{ s }}" class="service-check" {% if s in services_selected %}checked{% endif %}> {{ s }}</label>
+          {% endfor %}
+        </div>
+        <label class="rc-field rc-gap-top" id="otherServiceWrap" style="{% if 'Other' not in services_selected %}display:none{% endif %}">
+          <span>Other service description</span>
+          <input type="text" name="other_service_description" placeholder="Describe the service" value="{{ lead.other_service_description or '' }}">
+        </label>
+      </fieldset>
+
+      <fieldset class="rc-fieldset">
+        <legend>Notes</legend>
+        <div class="rc-stack">
+          <label class="rc-field"><span>Qualification notes</span><textarea name="qualification_notes" rows="2" placeholder="What makes this lead a good fit?">{{ lead.qualification_notes or '' }}</textarea></label>
+          <label class="rc-field"><span>Requirement notes</span><textarea name="requirement_notes" rows="2" placeholder="What does the client need?">{{ lead.requirement_notes or '' }}</textarea></label>
+          <label class="rc-field"><span>Internal notes</span><textarea name="internal_notes" rows="2" placeholder="Context for your team">{{ lead.internal_notes or '' }}</textarea></label>
+        </div>
+      </fieldset>
+    </div>
+    <footer class="rc-dialog-foot">
+      <button type="button" class="btn btn-outline btn-sm" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+    </footer>
+  </form>
+</dialog>
+
+{% if lead.company_pk %}
+<dialog class="rc-dialog is-wide" id="contactDialog" aria-labelledby="contactTitle">
+  <form method="post" action="{{ url_for('add_contact', company_id=lead.company_pk) }}" class="rc-dialog-form">
+    <input type="hidden" name="next_lead_id" value="{{ lead.id }}">
+    <header class="rc-dialog-head"><h2 id="contactTitle">Add a contact at {{ lead.company_name }}</h2>{{ close_button() }}</header>
+    <div class="rc-dialog-body">{% include "_contact_fields.html" %}</div>
+    <footer class="rc-dialog-foot">
+      <button type="button" class="btn btn-outline btn-sm" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Add contact</button>
+    </footer>
+  </form>
+</dialog>
+{% endif %}
 
 <script>
 {
 document.getElementById('stageSelect').addEventListener('change', function() {
-  document.getElementById('lostReasonWrap').style.display = this.value === 'Lost' ? 'block' : 'none';
+  document.getElementById('lostReasonWrap').style.display = this.value === 'Lost' ? '' : 'none';
 });
 const otherCheck = document.querySelector('.service-check[value="Other"]');
 const otherWrap = document.getElementById('otherServiceWrap');
-if (otherCheck) { otherCheck.addEventListener('change', () => { otherWrap.style.display = otherCheck.checked ? 'block' : 'none'; }); }
+if (otherCheck) { otherCheck.addEventListener('change', () => { otherWrap.style.display = otherCheck.checked ? '' : 'none'; }); }
 
 (function () {
   const nameField = document.getElementById('linkCompanyName');

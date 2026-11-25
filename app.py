@@ -68,7 +68,6 @@ PRIORITIES = ["High", "Medium", "Low"]
 BUDGET_RANGES = ["Under 25k", "25k-50k", "50k-1L", "1L-2L", "2L-5L", "5L+"]
 COMPANY_STATUSES = ["Prospect", "Customer", "Inactive"]
 PROJECT_STATUSES = ["Planning", "In Progress", "On Hold", "Client Review", "Completed", "Cancelled"]
-TASK_STATUSES = ["To Do", "In Progress", "Internal Review", "Client Review", "Completed"]
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
@@ -750,7 +749,8 @@ def visible_projects_clause(user, alias="projects"):
     return (
         f"({alias}.project_manager_id=? OR "
         f"EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id={alias}.id AND pm.user_id=?) OR "
-        f"EXISTS (SELECT 1 FROM project_tasks pt WHERE pt.project_id={alias}.id AND pt.assignee_id=?))",
+        f"EXISTS (SELECT 1 FROM work_tasks wt JOIN work_task_assignees wa ON wa.task_id=wt.id "
+        f"WHERE wt.project_id={alias}.id AND wa.user_id=?))",
         [user["id"], user["id"], user["id"]],
     )
 
@@ -1290,35 +1290,50 @@ def leads_list():
     tag_filter = request.args.get("tag", "").strip()
     interest_filter = request.args.get("interest", "").strip()
 
-    query = f"""
-        SELECT leads.*, users.name AS owner_name, companies.name AS company_name
+    # Everything except the stage filter, so the stage tabs can show a count for each stage.
+    scope = f"""
         FROM leads
         LEFT JOIN users ON leads.owner_id = users.id
         LEFT JOIN companies ON leads.company_id = companies.id
         WHERE {clause}
     """
-    if stage_filter:
-        query += " AND stage = ?"
-        params.append(stage_filter)
     if interest_filter:
-        query += " AND interest_level = ?"
+        scope += " AND interest_level = ?"
         params.append(interest_filter)
     if search:
-        query += " AND (leads.name LIKE ? OR leads.phone LIKE ? OR leads.email LIKE ? OR companies.name LIKE ?)"
+        scope += " AND (leads.name LIKE ? OR leads.phone LIKE ? OR leads.email LIKE ? OR companies.name LIKE ?)"
         like = f"%{search}%"
         params.extend([like, like, like, like])
     if tag_filter:
-        query += " AND tags LIKE ?"
+        scope += " AND tags LIKE ?"
         params.append(f"%{tag_filter}%")
+
+    stage_counts = {stage: 0 for stage in STAGES}
+    for row in db.execute(f"SELECT stage, COUNT(*) c {scope} GROUP BY stage", params):
+        if row["stage"] in stage_counts:
+            stage_counts[row["stage"]] = row["c"]
+
+    query = f"SELECT leads.*, users.name AS owner_name, companies.name AS company_name {scope}"
+    if stage_filter:
+        query += " AND stage = ?"
+        params.append(stage_filter)
     query += " ORDER BY leads.created_at DESC"
 
-    leads = db.execute(query, params).fetchall()
+    leads = []
+    for row in db.execute(query, params):
+        lead = dict(row)
+        lead["follow"] = _due_view(row["follow_up_date"], row["stage"] in ("Won", "Lost"))
+        lead["initials"] = _initials(row["name"])
+        lead["owner_initials"] = _initials(row["owner_name"]) if row["owner_name"] else ""
+        leads.append(lead)
 
     return render_template(
         "leads_list.html",
         leads=leads,
         stages=STAGES,
         stage_filter=stage_filter,
+        stage_counts=stage_counts,
+        total_all=sum(stage_counts.values()),
         search=search,
         tag_filter=tag_filter,
         interest_filter=interest_filter,
@@ -2102,10 +2117,10 @@ def projects_list():
     clause, params = visible_projects_clause(user, "p")
     projects = db.execute(
         f"""SELECT p.*, pm.name AS project_manager_name, l.name AS lead_name, c.name AS company_name,
-                   COUNT(t.id) AS task_count, SUM(CASE WHEN t.status='Completed' THEN 1 ELSE 0 END) AS completed_task_count
+                   COUNT(t.id) AS task_count, SUM(CASE WHEN t.status='Complete' THEN 1 ELSE 0 END) AS completed_task_count
             FROM projects p LEFT JOIN users pm ON pm.id=p.project_manager_id
             LEFT JOIN leads l ON l.id=p.lead_id LEFT JOIN companies c ON c.id=p.company_id
-            LEFT JOIN project_tasks t ON t.project_id=p.id WHERE {clause}
+            LEFT JOIN work_tasks t ON t.project_id=p.id WHERE {clause}
             GROUP BY p.id
             ORDER BY CASE p.status WHEN 'In Progress' THEN 0 WHEN 'Planning' THEN 1 WHEN 'On Hold' THEN 2 ELSE 3 END,
                      p.target_date IS NULL, p.target_date, p.updated_at DESC""", params,
@@ -2204,12 +2219,11 @@ def project_detail(project_id):
         flash("Project not found, or it is not assigned to you.", "error")
         return redirect(url_for("projects_list"))
     members = db.execute("SELECT u.id,u.name,u.role FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? ORDER BY u.name", (project_id,)).fetchall()
-    tasks = db.execute("""SELECT t.*,u.name AS assignee_name FROM project_tasks t LEFT JOIN users u ON u.id=t.assignee_id
-        WHERE t.project_id=? ORDER BY CASE t.status WHEN 'In Progress' THEN 0 WHEN 'To Do' THEN 1 WHEN 'Internal Review' THEN 2 WHEN 'Client Review' THEN 3 ELSE 4 END,
-        t.due_date IS NULL,t.due_date,t.id DESC""", (project_id,)).fetchall()
+    tasks = _project_task_views(db, project_id)
+    every_task = tasks + [sub for task in tasks for sub in task["subtasks"]]
     assigned = (project["project_manager_id"] == user["id"]
                 or any(member["id"] == user["id"] for member in members)
-                or any(task["assignee_id"] == user["id"] for task in tasks))
+                or any(person["id"] == user["id"] for task in every_task for person in task["assignees"]))
     note = None
     draft = ""
     conflict = False
@@ -2240,8 +2254,10 @@ def project_detail(project_id):
     all_users = db.execute("SELECT id,name,role FROM users ORDER BY name").fetchall()
     response = app.make_response(render_template("project_detail.html", project=project, members=members, tasks=tasks, activities=activities,
         assigned=assigned, note=note, note_draft=draft, note_conflict=conflict,
-        users=all_users, can_manage=can_manage_project(user, project), task_statuses=TASK_STATUSES,
-        priorities=PRIORITIES, completed_count=sum(1 for task in tasks if task["status"] == "Completed")))
+        users=all_users, can_manage=can_manage_project(user, project),
+        statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(), here=request.path,
+        task_projects=[{"id": project["id"], "name": project["name"]}], project_filter=project["id"],
+        task_total=len(every_task), completed_count=sum(1 for task in every_task if task["status"] == "Complete")))
     response.cache_control.no_store = True
     response.status_code = 409 if conflict else 200
     return response
@@ -2264,154 +2280,20 @@ def project_update_status(project_id):
     return redirect(url_for("project_detail", project_id=project_id))
 
 
-@app.route("/projects/<int:project_id>/tasks", methods=["POST"])
-@login_required
-def project_add_task(project_id):
-    db = get_db(); user = current_user(); project = _project_detail_row(db, project_id, user)
-    if not project or not can_manage_project(user, project):
-        flash("Only the project owner or a manager can add tasks.", "error")
-        return redirect(url_for("projects_list"))
-    title, assignee_id, priority = request.form.get("title", "").strip(), request.form.get("assignee_id", type=int), request.form.get("priority", "Medium")
-    if not title or priority not in PRIORITIES:
-        flash("Enter a task title and valid priority.", "error")
-        return redirect(url_for("project_detail", project_id=project_id))
-    if assignee_id and not db.execute("SELECT id FROM users WHERE id=?", (assignee_id,)).fetchone():
-        flash("Choose a valid task assignee.", "error")
-        return redirect(url_for("project_detail", project_id=project_id))
-    save_project_task(db, project, user, title, assignee_id, priority,
-        request.form.get("description", "").strip(), None, request.form.get("due_date") or None,
-        request.form.get("estimated_hours", type=float))
-    flash("Task added.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
-
-
-def save_project_task(db, project, user, title, assignee_id, priority, description,
-                      start_date, due_date, hours, task_id=None):
-    now = now_str()
-    project_id = project["id"]
-    fields = (title, description, assignee_id or None, start_date, due_date, priority, hours, now)
-    if task_id is None:
-        db.execute("""INSERT INTO project_tasks
-            (title,description,assignee_id,start_date,due_date,priority,estimated_hours,updated_at,
-             project_id,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (*fields, project_id, user["id"], now))
-    else:
-        db.execute("""UPDATE project_tasks SET title=?,description=?,assignee_id=?,start_date=?,
-            due_date=?,priority=?,estimated_hours=?,updated_at=? WHERE id=? AND project_id=?""",
-            (*fields, task_id, project_id))
-    if assignee_id:
-        db.execute("INSERT OR IGNORE INTO project_members (project_id,user_id,added_at) VALUES (?,?,?)", (project_id, assignee_id, now))
-    db.execute("UPDATE projects SET updated_at=? WHERE id=?", (now, project_id))
-    event = "Updated task" if task_id is not None else "Created task"
-    log_project_event(db, project_id, "Task updated" if task_id is not None else "Task assigned", title)
-    db.commit()
-    log_activity(event, "project", project_id, project["name"], title)
-
-
-@app.route("/projects/<int:project_id>/tasks/<int:task_id>/status", methods=["POST"])
-@login_required
-def project_update_task_status(project_id, task_id):
-    db = get_db(); user = current_user(); project = _project_detail_row(db, project_id, user)
-    task = db.execute("SELECT * FROM project_tasks WHERE id=? AND project_id=?", (task_id, project_id)).fetchone()
-    if not project or not task or not (can_manage_project(user, project) or task["assignee_id"] == user["id"]):
-        flash("You can only update tasks assigned to you.", "error")
-        return redirect(url_for("projects_list"))
-    status = request.form.get("status")
-    if status not in TASK_STATUSES:
-        flash("Choose a valid task status.", "error")
-    elif status != task["status"]:
-        now = now_str()
-        db.execute("UPDATE project_tasks SET status=?,updated_at=?,completed_at=? WHERE id=?", (status, now, now if status == "Completed" else None, task_id))
-        db.execute("UPDATE projects SET updated_at=? WHERE id=?", (now, project_id))
-        log_project_event(db, project_id, "Task status updated", f"{task['title']}: {task['status']} → {status}")
-        db.commit(); log_activity("Updated task", "project", project_id, project["name"], f"{task['title']} → {status}")
-    if request.form.get("source") == "planner":
-        return redirect(url_for("team_planner", view=request.form.get("view", "list"),
-            project=request.form.get("project", ""), scope=request.form.get("scope", "all")))
-    return redirect(url_for("project_detail", project_id=project_id))
-
-
-@app.route("/my-tasks")
+# Project tasks now live in the Tasks module. These keep old bookmarks working.
+@app.get("/my-tasks")
 @login_required
 def my_tasks():
-    db = get_db(); user = current_user()
-    tasks = db.execute("""SELECT t.*,p.name AS project_name,p.status AS project_status,c.name AS company_name
-        FROM project_tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN companies c ON c.id=p.company_id
-        WHERE t.assignee_id=? AND t.status!='Completed'
-        ORDER BY t.due_date IS NULL,t.due_date,CASE t.priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,t.id DESC""", (user["id"],)).fetchall()
-    return render_template("my_tasks.html", tasks=tasks, task_statuses=TASK_STATUSES)
+    return redirect(url_for("tasks_list", assignee="me"))
 
-
-# ---------- Team planning and private reminders ----------
 
 @app.get("/planner")
 @login_required
 def team_planner():
-    db, user = get_db(), current_user()
-    clause, params = visible_projects_clause(user, "p")
-    projects = db.execute(f"SELECT p.id,p.name,p.project_manager_id FROM projects p WHERE {clause} ORDER BY p.name", params).fetchall()
-    selected = request.args.get("project", type=int)
-    scope = "mine" if request.args.get("scope") == "mine" else "all"
-    view = "board" if request.args.get("view") == "board" else "list"
-    if selected:
-        clause += " AND p.id=?"
-        params.append(selected)
-    if scope == "mine":
-        clause += " AND t.assignee_id=?"
-        params.append(user["id"])
-    tasks = db.execute(f"""SELECT t.*,p.name AS project_name,p.project_manager_id,u.name AS assignee_name
-        FROM project_tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id
-        WHERE {clause} ORDER BY t.status='Completed',t.due_date IS NULL,t.due_date,t.id""", params).fetchall()
-    return render_template("planner.html", projects=projects, tasks=tasks, view=view, scope=scope,
-        selected=selected, statuses=TASK_STATUSES,
-        can_schedule=any(can_manage_project(user, p) for p in projects))
+    return redirect(url_for("tasks_board"))
 
 
-@app.route("/planner/tasks/new", methods=["GET", "POST"])
-@app.route("/planner/tasks/<int:task_id>/edit", methods=["GET", "POST"])
-@login_required
-def schedule_task(task_id=None):
-    db, user = get_db(), current_user()
-    clause, params = visible_projects_clause(user, "p")
-    projects = [p for p in db.execute(f"SELECT p.* FROM projects p WHERE {clause} ORDER BY p.name", params)
-                if can_manage_project(user, p)]
-    task = None
-    if task_id is not None:
-        task = db.execute("SELECT * FROM project_tasks WHERE id=?", (task_id,)).fetchone()
-        if not task or task["project_id"] not in {p["id"] for p in projects}:
-            abort(404)
-    if not projects:
-        abort(403)
-    selected = task["project_id"] if task else request.values.get("project", type=int)
-    values = request.form if request.method == "POST" else (dict(task) if task else {})
-    if request.method == "POST":
-        project = next((p for p in projects if p["id"] == selected), None)
-        title = values.get("title", "").strip()
-        raw_owner = values.get("assignee_id", "")
-        owner = request.form.get("assignee_id", type=int)
-        start, due = values.get("start_date", ""), values.get("due_date", "")
-        try:
-            if not project or not title or values.get("priority") not in PRIORITIES:
-                raise ValueError("Choose a project and priority, and enter a task name.")
-            if raw_owner and (not owner or not db.execute("SELECT 1 FROM users WHERE id=?", (owner,)).fetchone()):
-                raise ValueError("Choose an existing assignee.")
-            try:
-                start = date.fromisoformat(start).isoformat() if start else None
-                due = date.fromisoformat(due).isoformat() if due else None
-            except ValueError:
-                raise ValueError("Enter a valid start date and due date.")
-            if start and due and due < start:
-                raise ValueError("Choose a due date on or after the start date.")
-        except ValueError as error:
-            flash(str(error), "error")
-        else:
-            save_project_task(db, project, user, title, owner, values["priority"],
-                values.get("description", "").strip(), start, due, task["estimated_hours"] if task else None, task_id)
-            flash("Task schedule saved.", "success")
-            return redirect(url_for("team_planner", project=selected))
-    return render_template("schedule_task.html", projects=projects, selected=selected, values=values,
-        editing=task is not None, users=db.execute("SELECT id,name FROM users ORDER BY name").fetchall(), priorities=PRIORITIES), (422 if request.method == "POST" else 200)
-
+# ---------- Private reminders ----------
 
 def reminder_day(value):
     try:
@@ -2636,20 +2518,43 @@ def read_chat_messages(peer_id):
 @login_required
 def contacts_list():
     db = get_db()
+    user = current_user()
     search = request.args.get("q", "").strip()
-    query = """
-        SELECT companies.*, COUNT(DISTINCT contacts.id) AS contact_count
-        FROM companies LEFT JOIN contacts ON contacts.company_id = companies.id
-    """
-    params = []
+    status_filter = request.args.get("status", "")
+    lead_clause, lead_params = visible_leads_clause(user)
+
+    where, where_params = "", []
     if search:
-        query += " WHERE companies.name LIKE ?"
-        params.append(f"%{search}%")
-    query += " GROUP BY companies.id ORDER BY companies.name"
-    companies = db.execute(query, params).fetchall()
+        where = " WHERE (companies.name LIKE ? OR companies.industry LIKE ? OR companies.city LIKE ?)"
+        where_params = [f"%{search}%"] * 3
+    status_counts = {status: 0 for status in COMPANY_STATUSES}
+    for row in db.execute(f"SELECT COALESCE(status, 'Prospect') s, COUNT(*) c FROM companies{where} GROUP BY s", where_params):
+        if row["s"] in status_counts:
+            status_counts[row["s"]] = row["c"]
+
+    query = f"""
+        SELECT companies.*, COUNT(DISTINCT contacts.id) AS contact_count, users.name AS owner_name,
+               (SELECT COUNT(*) FROM leads WHERE leads.company_id = companies.id AND {lead_clause}) AS lead_count
+        FROM companies
+        LEFT JOIN contacts ON contacts.company_id = companies.id
+        LEFT JOIN users ON users.id = companies.account_owner_id
+        {where}
+    """
+    params = [*lead_params, *where_params]
+    if status_filter in COMPANY_STATUSES:
+        query += (" AND" if where else " WHERE") + " COALESCE(companies.status, 'Prospect') = ?"
+        params.append(status_filter)
+    query += " GROUP BY companies.id ORDER BY companies.name COLLATE NOCASE"
+    companies = []
+    for row in db.execute(query, params):
+        company = dict(row)
+        company["initials"] = _initials(row["name"])
+        company["owner_initials"] = _initials(row["owner_name"]) if row["owner_name"] else ""
+        companies.append(company)
     users = db.execute("SELECT id, name FROM users ORDER BY name").fetchall()
     return render_template("contacts_list.html", companies=companies, search=search,
-                            statuses=COMPANY_STATUSES, users=users)
+                            statuses=COMPANY_STATUSES, status_filter=status_filter,
+                            status_counts=status_counts, total_all=sum(status_counts.values()), users=users)
 
 
 @app.route("/contacts/companies/add", methods=["POST"])
@@ -3554,6 +3459,42 @@ def _init_work_tasks(db):
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_status ON work_tasks(status, parent_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_task_events_task ON work_task_events(task_id, id)")
+    _add_cols(db, "work_tasks", [
+        ("project_id", "INTEGER REFERENCES projects(id) ON DELETE SET NULL"),
+        ("legacy_project_task_id", "INTEGER"),
+    ])
+    db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_project ON work_tasks(project_id)")
+    _migrate_project_tasks(db)
+
+
+def _migrate_project_tasks(db):
+    """Copy tasks from the old per-project table into the Tasks module, once per task.
+
+    The old project_tasks table is left in place as a record; legacy_project_task_id
+    marks what has already been copied so restarts never duplicate anything.
+    """
+    status_map = {"To Do": "To Do", "In Progress": "In Progress", "Internal Review": "Update Required",
+                  "Client Review": "Update Required", "Completed": "Complete"}
+    priority_map = {"High": "High", "Medium": "Normal", "Low": "Low"}
+    rows = db.execute(
+        """SELECT id, project_id, title, description, assignee_id, start_date, due_date, priority, status,
+                  created_by, created_at, updated_at, completed_at
+           FROM project_tasks
+           WHERE id NOT IN (SELECT legacy_project_task_id FROM work_tasks WHERE legacy_project_task_id IS NOT NULL)
+           ORDER BY id""").fetchall()
+    for (old_id, project_id, title, description, assignee_id, start_date, due_date, priority, status,
+         created_by, created_at, updated_at, completed_at) in rows:
+        new_status = status_map.get(status, "To Do")
+        cur = db.execute(
+            """INSERT INTO work_tasks (title, description, status, priority, start_date, due_date, created_by,
+                                       created_at, updated_at, completed_at, project_id, legacy_project_task_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (title, description, new_status, priority_map.get(priority), start_date, due_date, created_by,
+             created_at, updated_at, completed_at if new_status == "Complete" else None, project_id, old_id))
+        if assignee_id and db.execute("SELECT 1 FROM users WHERE id=?", (assignee_id,)).fetchone():
+            db.execute("INSERT OR IGNORE INTO work_task_assignees (task_id, user_id) VALUES (?,?)", (cur.lastrowid, assignee_id))
+        db.execute("INSERT INTO work_task_events (task_id, user_id, kind, body, created_at) VALUES (?,?,?,?,?)",
+                   (cur.lastrowid, created_by, "activity", "created this task", created_at))
 
 
 def _task_token():
@@ -3567,9 +3508,9 @@ def _check_task_token():
 
 
 def _tasks_back(default):
-    """Return the caller's /tasks URL when it supplied one, so filters survive a save."""
+    """Return the caller's /tasks or /projects URL when it supplied one, so filters survive a save."""
     target = request.form.get("next", "")
-    return target if target.startswith("/tasks") and not target.startswith("//") else default
+    return target if target.startswith(("/tasks", "/projects/")) and not target.startswith("//") else default
 
 
 def _log_task_event(db, task_id, body, kind="activity"):
@@ -3580,7 +3521,8 @@ def _log_task_event(db, task_id, body, kind="activity"):
 
 
 def _initials(name):
-    parts = (name or "?").split()
+    words = (name or "").split()
+    parts = [w for w in words if w[:1].isalnum()] or words or ["?"]
     return (parts[0][:1] + (parts[-1][:1] if len(parts) > 1 else "")).upper()
 
 
@@ -3622,9 +3564,16 @@ def _task_views(db, rows):
                 {"id": r["id"], "name": r["name"], "initials": _initials(r["name"]), "tone": r["id"] % 5})
         for r in db.execute(f"SELECT task_id, tag FROM work_task_tags WHERE task_id IN ({marks}) ORDER BY tag", ids):
             tags.setdefault(r["task_id"], []).append({"name": r["tag"], "tone": sum(map(ord, r["tag"])) % 6})
+    project_names = {}
+    project_ids = sorted({row["project_id"] for row in rows if row["project_id"]})
+    if project_ids:
+        marks = ",".join("?" * len(project_ids))
+        project_names = {r["id"]: r["name"] for r in db.execute(f"SELECT id, name FROM projects WHERE id IN ({marks})", project_ids)}
     views = []
     for row in rows:
         item = dict(row)
+        item["project"] = ({"id": row["project_id"], "name": project_names[row["project_id"]]}
+                           if row["project_id"] in project_names else None)
         item["assignees"] = people.get(row["id"], [])
         item["tags"] = tags.get(row["id"], [])
         item["due"] = _due_view(row["due_date"], row["status"] == "Complete")
@@ -3647,6 +3596,34 @@ def _set_task_status(db, task, status):
     db.execute("UPDATE work_tasks SET status=?, updated_at=?, completed_at=? WHERE id=?",
                (status, now, now if status == "Complete" else None, task["id"]))
     _log_task_event(db, task["id"], f"changed status from {task['status']} to {status}")
+    _note_on_project(db, task["project_id"], "Task status updated", f"{task['title']}: {task['status']} → {status}")
+
+
+def _note_on_project(db, project_id, event, detail):
+    """Mirror a task change into its project's activity feed."""
+    if project_id:
+        log_project_event(db, project_id, event, detail)
+        db.execute("UPDATE projects SET updated_at=? WHERE id=?", (now_str(), project_id))
+
+
+def _visible_project_options(db, user, always=None):
+    """Projects this user may file a task under, as id/name pairs."""
+    clause, params = visible_projects_clause(user, "p")
+    options = [dict(r) for r in db.execute(f"SELECT p.id, p.name FROM projects p WHERE {clause} ORDER BY p.name", params)]
+    if always and always["id"] not in {o["id"] for o in options}:
+        options.append(always)
+    return options
+
+
+def _project_task_views(db, project_id):
+    """Top-level tasks of one project in workflow order, each carrying its subtasks."""
+    views = _task_views(db, db.execute("SELECT * FROM work_tasks WHERE project_id=? ORDER BY id", (project_id,)).fetchall())
+    by_id = {item["id"]: item for item in views}
+    top = []
+    for item in views:
+        parent = by_id.get(item["parent_id"])
+        (parent["subtasks"] if parent else top).append(item)
+    return sorted(top, key=lambda item: (WORK_STATUSES.index(item["status"]) if item["status"] in WORK_STATUSES else 0, item["id"]))
 
 
 def _task_scope(db, user):
@@ -3660,15 +3637,21 @@ def _task_scope(db, user):
 
     assignee = request.args.get("assignee", "")
     assignee_id = user["id"] if assignee == "me" else (int(assignee) if assignee.isdigit() else None)
+    project_id = request.args.get("project", type=int)
 
     def involves(item):
         return not assignee_id or any(p["id"] == assignee_id for p in item["assignees"])
 
+    def in_project(item):
+        return not project_id or item["project_id"] == project_id
+
     show_closed = request.args.get("closed", "1") != "0"
     return {
-        "top": [item for item in top if involves(item) or any(involves(sub) for sub in item["subtasks"])],
-        "all": [item for item in views if involves(item)],
+        "top": [item for item in top if in_project(item) and (involves(item) or any(involves(sub) for sub in item["subtasks"]))],
+        "all": [item for item in views if in_project(item) and involves(item)],
         "assignee": assignee,
+        "project": project_id,
+        "projects": _visible_project_options(db, user),
         "show_closed": show_closed,
         "users": db.execute("SELECT id, name FROM users ORDER BY name").fetchall(),
     }
@@ -3678,6 +3661,7 @@ def _tasks_page(template, scope, **extra):
     return render_template(
         template, users=scope["users"], assignee=scope["assignee"], show_closed=scope["show_closed"],
         token=_task_token(), statuses=WORK_STATUSES, priorities=WORK_PRIORITIES,
+        project_filter=scope["project"], task_projects=scope["projects"],
         here=request.full_path.rstrip("?"), **extra,
     )
 
@@ -3755,10 +3739,14 @@ def task_create():
     title = request.form.get("title", "").strip()
     status = request.form.get("status", "To Do")
     parent_id = request.form.get("parent_id", type=int)
+    project_id = request.form.get("project_id", type=int)
     if parent_id:
         parent = _get_work_task(db, parent_id)
         if parent["parent_id"]:
             abort(400)  # one level of subtasks only
+        project_id = parent["project_id"]  # a subtask always belongs to its parent's project
+    elif project_id and not db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
+        abort(400)
     default = url_for("task_detail", task_id=parent_id) if parent_id else url_for("tasks_list")
     if not title or len(title) > 200 or status not in WORK_STATUSES:
         flash("Enter a task name of up to 200 characters.", "error")
@@ -3771,9 +3759,10 @@ def task_create():
         return redirect(_tasks_back(default))
     now = now_str()
     cur = db.execute(
-        "INSERT INTO work_tasks (parent_id,title,status,due_date,created_by,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?)",
-        (parent_id, title, status, due, user["id"], now, now, now if status == "Complete" else None),
+        "INSERT INTO work_tasks (parent_id,project_id,title,status,due_date,created_by,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (parent_id, project_id or None, title, status, due, user["id"], now, now, now if status == "Complete" else None),
     )
+    _note_on_project(db, project_id, "Task added", title)
     _log_task_event(db, cur.lastrowid, "created this task")
     if parent_id:
         _log_task_event(db, parent_id, f"added subtask {title}")
@@ -3808,6 +3797,7 @@ def task_detail(task_id):
         created_label=f"{created.day} {created.strftime('%b %Y')}",
         users=db.execute("SELECT id, name FROM users ORDER BY name").fetchall(),
         statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(),
+        task_projects=_visible_project_options(db, user, task["project"]),
         can_delete=user["role"] == "manager" or task["created_by"] == user["id"],
     )
 
@@ -3875,6 +3865,16 @@ def task_update(task_id):
         if tag not in new_tags:
             db.execute("DELETE FROM work_task_tags WHERE task_id=? AND tag=?", (task_id, tag))
             _log_task_event(db, task_id, f"removed tag {tag}")
+    if "project_id" in form and not task["parent_id"]:
+        new_project = form.get("project_id", type=int)
+        project_row = db.execute("SELECT id, name FROM projects WHERE id=?", (new_project,)).fetchone() if new_project else None
+        new_project = project_row["id"] if project_row else None
+        if new_project != task["project_id"]:
+            db.execute("UPDATE work_tasks SET project_id=? WHERE id=? OR parent_id=?", (new_project, task_id, task_id))
+            _log_task_event(db, task_id, f"moved this task to project {project_row['name']}" if project_row
+                            else "removed this task from its project")
+            _note_on_project(db, task["project_id"], "Task removed", title)
+            _note_on_project(db, new_project, "Task added", title)
     db.execute(
         "UPDATE work_tasks SET title=?, description=?, priority=?, start_date=?, due_date=?, updated_at=? WHERE id=?",
         (title, description, priority, start, due, now_str(), task_id),

@@ -48,3 +48,8 @@
 {% macro tags(items) -%}
 {% for tag in items %}<span class="tk-tag tk-tagtone-{{ tag.tone }}">{{ tag.name }}</span>{% endfor %}
 {%- endmacro %}
+
+{% macro project(item) -%}
+{% if item %}<a class="tk-project" href="{{ url_for('project_detail', project_id=item.id) }}" data-turbo-frame="_top" title="Project: {{ item.name }}">
+  <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M2 4.500h4l1.200 1.500H14v6.500H2Z"/></svg>{{ item.name }}</a>{% endif %}
+{%- endmacro %}

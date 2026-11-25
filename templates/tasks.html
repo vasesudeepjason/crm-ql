@@ -1,44 +1,6 @@
 {% extends "tasks_base.html" %}
 {% import "_task_bits.html" as bits %}
-
-{% macro row(task, nested=false) %}
-<div class="tk-row{% if nested %} is-sub{% endif %}{% if task.status == 'Complete' %} is-done{% endif %}" data-task-row
-     data-search="{{ task.title|lower }} {{ task.tags|map(attribute='name')|join(' ') }} {{ task.assignees|map(attribute='name')|join(' ')|lower }}">
-  <div class="tk-name">
-    {% if task.subtasks %}
-    <button type="button" class="tk-twist" data-subs-toggle aria-expanded="false" aria-controls="subs-{{ task.id }}" aria-label="Show subtasks of {{ task.title }}">
-      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M6 3.500 10.500 8 6 12.500Z" fill="currentColor"/></svg>
-    </button>
-    {% else %}<span class="tk-twist" aria-hidden="true"></span>{% endif %}
-    <form method="post" action="{{ url_for('task_set_status', task_id=task.id) }}" class="tk-check-form">
-      <input type="hidden" name="token" value="{{ token }}">
-      <input type="hidden" name="next" value="{{ here }}">
-      <input type="hidden" name="status" value="{{ 'To Do' if task.status == 'Complete' else 'Complete' }}">
-      <button type="submit" class="tk-check tk-st-{{ task.status|slug }}"
-              aria-label="{{ 'Reopen' if task.status == 'Complete' else 'Mark complete' }}: {{ task.title }}"
-              title="{{ 'Reopen task' if task.status == 'Complete' else 'Mark complete' }}">{{ bits.status_icon(task.status) }}</button>
-    </form>
-    <a class="tk-title" href="{{ url_for('task_detail', task_id=task.id) }}" data-turbo-frame="task-panel" data-task-open>{{ task.title }}</a>
-    {% if task.subtasks %}
-    <span class="tk-subcount" title="{{ task.subtasks|length }} subtask{{ '' if task.subtasks|length == 1 else 's' }}">
-      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M4 2.500v6.500a2 2 0 0 0 2 2h5.500M9.500 8.500l2.500 2.500-2.500 2.500"/></svg>{{ task.subtasks|length }}
-    </span>
-    {% endif %}
-    {% if task.description %}
-    <svg class="tk-has-notes" viewBox="0 0 16 16" width="14" height="14" aria-label="Has a description" role="img" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M3 5h10M3 8h10M3 11h6"/></svg>
-    {% endif %}
-    {% if task.tags %}<span class="tk-tags">{{ bits.tags(task.tags) }}</span>{% endif %}
-  </div>
-  <div class="tk-cell tk-people">{{ bits.avatars(task.assignees) }}</div>
-  <div class="tk-cell tk-due">{{ bits.due(task.due) }}</div>
-  <div class="tk-cell tk-prio">{{ bits.priority(task.priority) }}</div>
-</div>
-{% if task.subtasks %}
-<div class="tk-subs" id="subs-{{ task.id }}" hidden>
-  {% for sub in task.subtasks %}{{ row(sub, true) }}{% endfor %}
-</div>
-{% endif %}
-{% endmacro %}
+{% import "_task_rows.html" as rows with context %}
 
 {% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} shown, grouped by status.{% endblock %}
 
@@ -56,7 +18,7 @@
       <span class="tk-group-count" data-group-count>{{ group.tasks|length }}</span>
     </summary>
     <div class="tk-rows">
-      {% for task in group.tasks %}{{ row(task) }}{% endfor %}
+      {% for task in group.tasks %}{{ rows.row(task) }}{% endfor %}
       <form method="post" action="{{ url_for('task_create') }}" class="tk-add">
         <input type="hidden" name="token" value="{{ token }}">
         <input type="hidden" name="next" value="{{ here }}">

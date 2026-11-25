@@ -1,0 +1,42 @@
+{# Task panel dialog and the new-task dialog. Needs token, here, statuses, task_projects and project_filter. #}
+<dialog class="tk-dialog" id="taskDialog" aria-label="Task details">
+  <button type="button" class="tk-dialog-close" data-task-close aria-label="Close task">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+  </button>
+  <turbo-frame id="task-panel"><p class="tk-loading">Loading task…</p></turbo-frame>
+</dialog>
+
+<dialog class="tk-newdialog" id="newTaskDialog" aria-labelledby="newTaskTitle">
+  <form method="post" action="{{ url_for('task_create') }}" data-task-token="{{ token }}">
+    <input type="hidden" name="token" value="{{ token }}">
+    <input type="hidden" name="next" value="{{ here }}">
+    <h2 id="newTaskTitle">New task</h2>
+    <label>
+      <span>Task name</span>
+      <input type="text" name="title" maxlength="200" required autocomplete="off">
+    </label>
+    <div class="tk-newdialog-row">
+      <label>
+        <span>Status</span>
+        <select name="status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select>
+      </label>
+      <label>
+        <span>Due date</span>
+        <input type="date" name="due_date">
+      </label>
+    </div>
+    {% if task_projects %}
+    <label>
+      <span>Project</span>
+      <select name="project_id">
+        <option value="">No project</option>
+        {% for p in task_projects %}<option value="{{ p.id }}"{% if p.id == project_filter %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+      </select>
+    </label>
+    {% endif %}
+    <div class="tk-newdialog-actions">
+      <button type="button" class="btn btn-outline btn-sm" data-new-task-cancel>Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Create task</button>
+    </div>
+  </form>
+</dialog>

@@ -28,6 +28,7 @@
           <span class="tk-card-chip">{{ bits.priority(task.priority) }}</span>
         </div>
         {% if task.tags %}<div class="tk-card-tags">{{ bits.tags(task.tags) }}</div>{% endif %}
+        {% if task.project and not project_filter %}<div class="tk-card-tags">{{ bits.project(task.project) }}</div>{% endif %}
         {% if task.subtasks %}
         <div class="tk-card-sub">
           <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M4 2.500v6.500a2 2 0 0 0 2 2h5.500M9.500 8.500l2.500 2.500-2.500 2.500"/></svg>

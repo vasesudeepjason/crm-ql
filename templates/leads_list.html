@@ -1,253 +1,149 @@
 {% extends "base.html" %}
-
 {% block title %}Leads · Lead Desk{% endblock %}
-
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=4">
+<script src="{{ url_for('static', filename='records.js') }}?v=1" defer></script>
+{% endblock %}
+{% block main_class %}rc-page{% endblock %}
 {% block content %}
+{% set filtered = search or stage_filter or tag_filter or interest_filter %}
 
-<div class="page-header">
-    <div>
-        <h1 class="page-title">Leads</h1>
-        <p class="page-sub">
-            {{ leads|length }} lead{{ '' if leads|length == 1 else 's' }} shown
-        </p>
-    </div>
+{% macro flag(value) %}
+<span class="rc-flag rc-pr-{{ (value or 'none')|lower }}">
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.500 14V2.500" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"/><path class="rc-flag-fill" d="M3.500 3h8.300l-2 3 2 3H3.500Z" stroke="currentColor" stroke-width="1.300" stroke-linejoin="round"/></svg>
+  {{ value or '—' }}
+</span>
+{% endmacro %}
 
-    <div class="header-actions">
-        <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm desktop-add-lead">+ Add Lead</a>
-        <a href="{{ url_for('leads_kanban') }}" class="btn btn-outline btn-sm">
-            Kanban view
-        </a>
-
-        <a data-turbo="false" href="{{ url_for('export_leads') }}" class="btn btn-outline btn-sm">
-            Export CSV
-        </a>
-    </div>
+<div class="rc-header">
+  <div>
+    <h1 class="rc-heading">Leads</h1>
+    <p class="rc-lede">{{ leads|length }} lead{{ '' if leads|length == 1 else 's' }} shown{% if filtered %} with filters applied{% endif %}.</p>
+  </div>
+  <div class="rc-actions">
+    <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm desktop-add-lead">+ Add Lead</a>
+    <button type="button" class="btn btn-outline btn-sm" data-open-dialog="importDialog">Import</button>
+    <a data-turbo="false" href="{{ url_for('export_leads') }}" class="btn btn-outline btn-sm">Export CSV</a>
+  </div>
 </div>
 
+<nav class="rc-views" aria-label="Lead views">
+  <a href="{{ url_for('leads_list') }}" aria-current="page">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M3 4h10M3 8h10M3 12h10"/></svg>List
+  </a>
+  <a href="{{ url_for('leads_kanban') }}">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M3 3h4v10H3zM9 3h4v6H9z"/></svg>Kanban
+  </a>
+</nav>
 
-<form class="filter-bar" method="get" action="{{ url_for('leads_list') }}">
+<div class="rc-toolbar">
+  <nav class="rc-pills" aria-label="Filter by stage">
+    <a class="rc-pill{% if not stage_filter %} is-on{% endif %}"{% if not stage_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('leads_list', q=search or None, interest=interest_filter or None, tag=tag_filter or None) }}">All <b>{{ total_all }}</b></a>
+    {% for stage in stages %}
+    <a class="rc-pill rc-s-{{ stage|slug }}{% if stage == stage_filter %} is-on{% endif %}"{% if stage == stage_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('leads_list', stage=stage, q=search or None, interest=interest_filter or None, tag=tag_filter or None) }}"><i aria-hidden="true"></i>{{ stage }} <b>{{ stage_counts[stage] }}</b></a>
+    {% endfor %}
+  </nav>
 
-    <input
-        type="text"
-        name="q"
-        aria-label="Search leads by company, contact, phone, or email"
-        placeholder="Search company, contact, phone, email"
-        value="{{ search }}"
-    >
-
-    <select name="stage" onchange="this.form.requestSubmit()">
-        <option value="">All stages</option>
-
-        {% for stage in stages %}
-        <option
-            value="{{ stage }}"
-            {% if stage == stage_filter %}selected{% endif %}
-        >
-            {{ stage }}
-        </option>
-        {% endfor %}
+  <form class="rc-filters" method="get" action="{{ url_for('leads_list') }}">
+    {% if stage_filter %}<input type="hidden" name="stage" value="{{ stage_filter }}">{% endif %}
+    <label class="rc-search">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"><circle cx="7" cy="7" r="4.500"/><path d="m10.500 10.500 3 3"/></svg>
+      <input type="search" name="q" value="{{ search }}" placeholder="Search company, contact, phone, email" aria-label="Search leads by company, contact, phone, or email">
+    </label>
+    <select name="interest" aria-label="Filter by interest level" onchange="this.form.requestSubmit()">
+      <option value="">All interest levels</option>
+      {% for lvl in interest_levels %}<option value="{{ lvl }}"{% if lvl == interest_filter %} selected{% endif %}>{{ lvl }}</option>{% endfor %}
     </select>
-
-
-    <select name="interest" onchange="this.form.requestSubmit()">
-        <option value="">All interest levels</option>
-
-        {% for lvl in interest_levels %}
-        <option
-            value="{{ lvl }}"
-            {% if lvl == interest_filter %}selected{% endif %}
-        >
-            {{ lvl }}
-        </option>
-        {% endfor %}
-    </select>
-
-
-    <input
-        type="text"
-        name="tag"
-        placeholder="Filter by tag"
-        value="{{ tag_filter }}"
-    >
-
-    <button type="submit" class="btn btn-outline btn-sm">
-        Filter
-    </button>
-
-    {% if search or stage_filter or tag_filter or interest_filter %}
-    <a href="{{ url_for('leads_list') }}" class="btn btn-outline btn-sm">
-        Clear
-    </a>
-    {% endif %}
-
-</form>
-
-
-<div class="import-bar">
-
-    <form
-        method="post"
-        action="{{ url_for('import_leads') }}"
-        enctype="multipart/form-data"
-        class="import-form"
-    >
-        <input
-            type="file"
-            name="csv_file"
-            accept=".csv"
-            required
-        >
-
-        <button type="submit" class="btn btn-accent btn-sm">
-            Import CSV
-        </button>
-    </form>
-
-
-    <a
-        data-turbo="false" href="{{ url_for('download_template') }}"
-        class="btn btn-outline btn-sm"
-    >
-        Download import template (.xlsx)
-    </a>
-
-    <span class="import-hint">
-        Required columns:
-        <code>name, phone</code>.
-        Optional:
-        <code>email, source, tags</code>.
-    </span>
-
+    <input type="text" name="tag" value="{{ tag_filter }}" placeholder="Tag" aria-label="Filter by tag" class="rc-tag-input">
+    <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+    {% if filtered %}<a href="{{ url_for('leads_list') }}" class="rc-clear">Clear filters</a>{% endif %}
+  </form>
 </div>
 
-
-<div class="table-card">
-
-    <table>
-
-        <thead>
-            <tr>
-                <th>Company</th>
-                <th>Contact</th>
-                <th>Phone</th>
-                <th>Interest</th>
-                <th>Priority</th>
-                <th>Stage</th>
-                <th>Budget</th>
-                <th>Follow-up</th>
-
-                <th>Owner</th>
-
-                <th>Added</th>
-            </tr>
-        </thead>
-
-
-        <tbody>
-
-            {% for lead in leads %}
-
-            <tr
-                class="clickable-row"
-            >
-
-                <td>
-                    {{ lead.company_name or '—' }}
-                </td>
-
-                <td>
-                    <a class="row-link" href="{{ url_for('lead_detail', lead_id=lead.id) }}">{{ lead.name }}</a>
-                </td>
-
-                <td class="phone">
-                    {{ lead.phone }}
-                </td>
-
-
-                <td>
-
-                    {% if lead.interest_level %}
-
-                    <span
-                        class="interest-badge interest-{{ lead.interest_level|lower }}"
-                    >
-                        {{ lead.interest_level }}
-                    </span>
-
-                    {% else %}
-
-                    —
-
-                    {% endif %}
-
-                </td>
-
-
-                <td>
-                    {{ lead.priority or '—' }}
-                </td>
-
-
-                <td>
-                    <span class="stage-pill stage-{{ lead.stage|slug }}">
-                        {{ lead.stage }}
-                    </span>
-                </td>
-
-
-                <td>
-                    {{ lead.budget_range or '—' }}
-                </td>
-
-
-                <td>
-                    {{ lead.follow_up_date or '—' }}
-                </td>
-
-
-                <td>
-
-                    {% if lead.owner_id == user.id %}
-
-                    <span class="owner-badge owner-self">
-                        You
-                    </span>
-
-                    {% else %}
-
-                    <span class="owner-badge">
-                        via {{ lead.owner_name or 'Unassigned' }}
-                    </span>
-
-                    {% endif %}
-
-                </td>
-
-                <td>
-                    {{ lead.created_at[:10] }}
-                </td>
-
-            </tr>
-
-
-            {% else %}
-
-            <tr>
-                <td colspan="10">
-                    <div class="empty-state">
-                        No leads match these filters yet.
-                    </div>
-                </td>
-            </tr>
-
-            {% endfor %}
-
-        </tbody>
-
-    </table>
-
+{% if leads %}
+<div class="rc-table-wrap">
+  <table class="rc-table">
+    <thead>
+      <tr>
+        <th>Lead</th>
+        <th class="c-phone">Phone</th>
+        <th>Stage</th>
+        <th class="c-interest">Interest</th>
+        <th class="c-priority">Priority</th>
+        <th class="c-budget">Budget</th>
+        <th class="c-follow">Follow-up</th>
+        <th class="c-owner">Owner</th>
+        <th class="c-added">Added</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr class="clickable-row">
+        <td class="c-main">
+          <span class="rc-ident">
+            <span class="rc-avatar" aria-hidden="true">{{ lead.initials }}</span>
+            <span class="rc-ident-text">
+              <a class="row-link" href="{{ url_for('lead_detail', lead_id=lead.id) }}">{{ lead.name }}</a>
+              <small>{{ lead.company_name or 'No company' }}</small>
+            </span>
+          </span>
+        </td>
+        <td class="c-phone"><a class="rc-phone" href="tel:{{ lead.phone }}">{{ lead.phone }}</a></td>
+        <td><span class="rc-stage rc-s-{{ lead.stage|slug }}"><i aria-hidden="true"></i>{{ lead.stage }}</span></td>
+        <td class="c-interest">{% if lead.interest_level %}<span class="rc-interest rc-in-{{ lead.interest_level|lower }}">{{ lead.interest_level }}</span>{% else %}<span class="rc-none">—</span>{% endif %}</td>
+        <td class="c-priority">{{ flag(lead.priority) }}</td>
+        <td class="c-budget">{{ lead.budget_range or '—' }}</td>
+        <td class="c-follow">{% if lead.follow %}<span class="rc-follow{% if lead.follow.overdue %} is-overdue{% endif %}" title="{{ lead.follow_up_date }}">{{ lead.follow.label }}</span>{% else %}<span class="rc-none">—</span>{% endif %}</td>
+        <td class="c-owner">
+          {% if lead.owner_id == user.id %}<span class="rc-owner"><span class="rc-avatar is-small is-self" aria-hidden="true">{{ lead.owner_initials }}</span>You</span>
+          {% elif lead.owner_name %}<span class="rc-owner"><span class="rc-avatar is-small" aria-hidden="true">{{ lead.owner_initials }}</span>{{ lead.owner_name }}</span>
+          {% else %}<span class="rc-none">Unassigned</span>{% endif %}
+        </td>
+        <td class="c-added">{{ lead.created_at[:10] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
+{% else %}
+<div class="rc-empty">
+  {% if filtered %}
+  <h2>No leads match these filters</h2>
+  <p>Try a different stage, or clear the filters to see every lead.</p>
+  <a href="{{ url_for('leads_list') }}" class="btn btn-outline btn-sm">Clear filters</a>
+  {% else %}
+  <h2>No leads yet</h2>
+  <p>Add your first lead, or import a list from a spreadsheet.</p>
+  <div class="rc-actions">
+    <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm">+ Add Lead</a>
+    <button type="button" class="btn btn-outline btn-sm" data-open-dialog="importDialog">Import</button>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
-
-
+<dialog class="rc-dialog" id="importDialog" aria-labelledby="importTitle">
+  <form method="post" action="{{ url_for('import_leads') }}" enctype="multipart/form-data" class="rc-dialog-form">
+    <header class="rc-dialog-head">
+      <h2 id="importTitle">Import leads</h2>
+      <button type="button" class="rc-dialog-close" data-close-dialog aria-label="Close">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+      </button>
+    </header>
+    <div class="rc-dialog-body">
+      <p class="rc-help">Upload a CSV file with one lead per row. Required columns: <code>name</code>, <code>phone</code>, <code>company_name</code>. Other columns in the template are optional.</p>
+      <label class="rc-field">
+        <span>CSV file</span>
+        <input type="file" name="csv_file" accept=".csv" required>
+      </label>
+      <a data-turbo="false" href="{{ url_for('download_template') }}" class="rc-link">Download the import template (.xlsx)</a>
+    </div>
+    <footer class="rc-dialog-foot">
+      <button type="button" class="btn btn-outline btn-sm" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Import CSV</button>
+    </footer>
+  </form>
+</dialog>
 {% endblock %}

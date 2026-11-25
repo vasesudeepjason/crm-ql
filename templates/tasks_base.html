@@ -2,7 +2,7 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=5">
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=6">
 <script src="{{ url_for('static', filename='tasks.js') }}?v=2" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-view-{{ view }}{% endblock %}
@@ -20,7 +20,7 @@
 
 <nav class="tk-views" aria-label="Task views">
   {% for key, label, endpoint, glyph in views %}
-  <a href="{{ url_for(endpoint, assignee=assignee or None, closed=closed_arg) }}"{% if key == view %} aria-current="page"{% endif %}>
+  <a href="{{ url_for(endpoint, assignee=assignee or None, closed=closed_arg, project=project_filter) }}"{% if key == view %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round" stroke-linejoin="round"><path d="{{ glyph }}"/></svg>{{ label }}
   </a>
   {% endfor %}
@@ -43,6 +43,12 @@
     <form method="get" action="{{ url_for(request.endpoint) }}" class="tk-filter">
       {% if not show_closed %}<input type="hidden" name="closed" value="0">{% endif %}
       {% if month %}<input type="hidden" name="month" value="{{ month }}">{% endif %}
+      {% if task_projects %}
+      <select name="project" aria-label="Filter by project" onchange="this.form.requestSubmit()">
+        <option value="">All projects</option>
+        {% for p in task_projects %}<option value="{{ p.id }}"{% if p.id == project_filter %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+      </select>
+      {% endif %}
       <select name="assignee" aria-label="Filter by assignee" onchange="this.form.requestSubmit()">
         <option value="">All assignees</option>
         <option value="me"{% if assignee == 'me' %} selected{% endif %}>Assigned to me</option>
@@ -50,9 +56,9 @@
       </select>
     </form>
     <a class="tk-chip{% if assignee == 'me' %} is-on{% endif %}" aria-pressed="{{ 'true' if assignee == 'me' else 'false' }}"
-       href="{{ url_for(request.endpoint, month=month, assignee=None if assignee == 'me' else 'me', closed=closed_arg) }}">Me</a>
+       href="{{ url_for(request.endpoint, month=month, assignee=None if assignee == 'me' else 'me', closed=closed_arg, project=project_filter) }}">Me</a>
     <a class="tk-chip{% if show_closed %} is-on{% endif %}" aria-pressed="{{ 'true' if show_closed else 'false' }}"
-       href="{{ url_for(request.endpoint, month=month, assignee=assignee or None, closed=0 if show_closed else None) }}">
+       href="{{ url_for(request.endpoint, month=month, assignee=assignee or None, closed=0 if show_closed else None, project=project_filter) }}">
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.500 8.200 1.800 1.800 3.400-3.800"/></svg>
       Closed
     </a>
@@ -62,36 +68,5 @@
 {% block tasks_body %}{% endblock %}
 <p class="tk-nomatch tk-nomatch-floating" data-task-nomatch hidden>No tasks match your search.</p>
 
-<dialog class="tk-dialog" id="taskDialog" aria-label="Task details">
-  <button type="button" class="tk-dialog-close" data-task-close aria-label="Close task">
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
-  </button>
-  <turbo-frame id="task-panel"><p class="tk-loading">Loading task…</p></turbo-frame>
-</dialog>
-
-<dialog class="tk-newdialog" id="newTaskDialog" aria-labelledby="newTaskTitle">
-  <form method="post" action="{{ url_for('task_create') }}" data-task-token="{{ token }}">
-    <input type="hidden" name="token" value="{{ token }}">
-    <input type="hidden" name="next" value="{{ here }}">
-    <h2 id="newTaskTitle">New task</h2>
-    <label>
-      <span>Task name</span>
-      <input type="text" name="title" maxlength="200" required autocomplete="off">
-    </label>
-    <div class="tk-newdialog-row">
-      <label>
-        <span>Status</span>
-        <select name="status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select>
-      </label>
-      <label>
-        <span>Due date</span>
-        <input type="date" name="due_date">
-      </label>
-    </div>
-    <div class="tk-newdialog-actions">
-      <button type="button" class="btn btn-outline btn-sm" data-new-task-cancel>Cancel</button>
-      <button type="submit" class="btn btn-primary btn-sm">Create task</button>
-    </div>
-  </form>
-</dialog>
+{% include "_task_dialogs.html" %}
 {% endblock %}

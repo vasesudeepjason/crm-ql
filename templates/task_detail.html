@@ -2,7 +2,7 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}{{ task.title }} · Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=5">
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=6">
 <script src="{{ url_for('static', filename='tasks.js') }}?v=2" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-page-detail{% endblock %}
@@ -70,6 +70,23 @@
             </select>
           </span>
         </label>
+
+        {% if not parent %}
+        <label class="tk-field">
+          <span class="tk-field-name">Project</span>
+          <span class="tk-field-value tk-project-select">
+            <select name="project_id" aria-label="Project">
+              <option value="">No project</option>
+              {% for p in task_projects %}<option value="{{ p.id }}"{% if task.project and p.id == task.project.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+            </select>
+          </span>
+        </label>
+        {% elif task.project %}
+        <div class="tk-field">
+          <span class="tk-field-name">Project</span>
+          <span class="tk-field-value">{{ bits.project(task.project) }}</span>
+        </div>
+        {% endif %}
 
         <label class="tk-field tk-field-wide">
           <span class="tk-field-name">Tags</span>

@@ -5,11 +5,11 @@
 
 {% block tasks_toolbar %}
 {% set closed_q = None if show_closed else 0 %}
-<a class="tk-chip" href="{{ url_for('tasks_calendar', month=this_month, assignee=assignee or None, closed=closed_q) }}">Today</a>
-<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=prev_month, assignee=assignee or None, closed=closed_q) }}" aria-label="Previous month">
+<a class="tk-chip" href="{{ url_for('tasks_calendar', month=this_month, assignee=assignee or None, closed=closed_q, project=project_filter) }}">Today</a>
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=prev_month, assignee=assignee or None, closed=closed_q, project=project_filter) }}" aria-label="Previous month">
   <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.500 5.500 8 10 12.500"/></svg>
 </a>
-<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=next_month, assignee=assignee or None, closed=closed_q) }}" aria-label="Next month">
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=next_month, assignee=assignee or None, closed=closed_q, project=project_filter) }}" aria-label="Next month">
   <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.500 10.500 8 6 12.500"/></svg>
 </a>
 <h2 class="tk-cal-month">{{ month_label }}</h2>

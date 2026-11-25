@@ -1,118 +1,164 @@
 {% extends "base.html" %}
 {% block title %}Companies · Lead Desk{% endblock %}
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=4">
+<script src="{{ url_for('static', filename='records.js') }}?v=1" defer></script>
+{% endblock %}
+{% block main_class %}rc-page{% endblock %}
 {% block content %}
-<div class="page-header">
+{% set filtered = search or status_filter %}
+
+<div class="rc-header">
   <div>
-    <h1 class="page-title">Companies</h1>
-    <p class="page-sub">Every company is the center — contacts, leads, and invoices all live under it.</p>
+    <h1 class="rc-heading">Companies</h1>
+    <p class="rc-lede">{{ companies|length }} compan{{ 'y' if companies|length == 1 else 'ies' }} shown. Contacts, leads and invoices all live under a company.</p>
+  </div>
+  <div class="rc-actions">
+    <button type="button" class="btn btn-primary btn-sm" data-open-dialog="companyDialog">+ Add Company</button>
   </div>
 </div>
 
-<div class="detail-grid">
-  <div>
-    <div class="form-card">
-      <h2 class="section-title">Add a company</h2>
-      <form method="post" action="{{ url_for('add_company') }}">
-        <div class="form-group">
-          <label>Company name *</label>
-          <input type="text" name="name" placeholder="Company name" required>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Industry</label>
-            <input type="text" name="industry" placeholder="e.g. Manufacturing">
-          </div>
-          <div class="form-group">
-            <label>Status</label>
-            <select name="status">
-              {% for s in statuses %}<option value="{{ s }}" {% if s == 'Prospect' %}selected{% endif %}>{{ s }}</option>{% endfor %}
-            </select>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Website</label>
-          <input type="text" name="website" placeholder="company.com">
-        </div>
-        <div class="form-group">
-          <label>GBP Link <span class="page-sub" style="display:inline">(Google Business Profile)</span></label>
-          <input type="text" name="gbp_link" placeholder="https://g.page/…">
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Company Email</label>
-            <input type="email" name="email" placeholder="name@company.com">
-          </div>
-          <div class="form-group">
-            <label>Company Phone</label>
-            <input type="text" name="phone" placeholder="Phone number">
-          </div>
-          <div class="form-group">
-            <label>Alternate Phone</label>
-            <input type="text" name="alternate_phone" placeholder="Second phone number">
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Address</label>
-          <textarea name="address" placeholder="Street address"></textarea>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>City</label><input type="text" name="city" placeholder="City or town"></div>
-          <div class="form-group"><label>State</label><input type="text" name="state" placeholder="State or territory"></div>
-          <div class="form-group"><label>Pincode</label><input type="text" name="pincode" placeholder="Postal code"></div>
-        </div>
-        <div class="form-group"><label>Country</label><input type="text" name="country" placeholder="Country name" value="India"></div>
-        <div class="form-group">
-          <label>Billing address</label>
-          <textarea name="billing_address" placeholder="Address used on invoices"></textarea>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>GSTIN</label><input type="text" name="gstin" placeholder="15-character GSTIN"></div>
-          <div class="form-group"><label>PAN</label><input type="text" name="pan" placeholder="10-character PAN"></div>
-          <div class="form-group"><label>CIN</label><input type="text" name="cin" placeholder="Corporate identification number"></div>
-        </div>
-        {% if users %}
-        <div class="form-group">
-          <label>Account owner</label>
-          <select name="account_owner_id">
-            {% for u in users %}<option value="{{ u.id }}" {% if current_user and u.id == current_user.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
-          </select>
-        </div>
-        {% endif %}
-        <div class="form-group">
-          <label>Notes</label>
-          <textarea name="notes" placeholder="Add a note"></textarea>
-        </div>
-        <button type="submit" class="btn btn-accent">Add company</button>
-      </form>
-    </div>
-  </div>
+<div class="rc-toolbar">
+  <nav class="rc-pills" aria-label="Filter by status">
+    <a class="rc-pill{% if not status_filter %} is-on{% endif %}"{% if not status_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('contacts_list', q=search or None) }}">All <b>{{ total_all }}</b></a>
+    {% for s in statuses %}
+    <a class="rc-pill rc-c-{{ s|lower }}{% if s == status_filter %} is-on{% endif %}"{% if s == status_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('contacts_list', status=s, q=search or None) }}"><i aria-hidden="true"></i>{{ s }} <b>{{ status_counts[s] }}</b></a>
+    {% endfor %}
+  </nav>
 
-  <div>
-    <form class="filter-bar" method="get" action="{{ url_for('contacts_list') }}">
-      <input type="text" name="q" placeholder="Search companies" value="{{ search }}">
-      <button type="submit" class="btn btn-outline btn-sm">Search</button>
-      {% if search %}<a href="{{ url_for('contacts_list') }}" class="btn btn-outline btn-sm">Clear</a>{% endif %}
-    </form>
-
-    <div class="table-card">
-      <table>
-        <thead>
-          <tr><th>Company</th><th>Industry</th><th>Status</th><th>Contacts</th></tr>
-        </thead>
-        <tbody>
-          {% for c in companies %}
-          <tr class="clickable-row">
-            <td><a class="row-link" href="{{ url_for('company_detail', company_id=c.id) }}">{{ c.name }}</a></td>
-            <td>{{ c.industry or '—' }}</td>
-            <td><span class="owner-badge">{{ c.status or 'Prospect' }}</span></td>
-            <td>{{ c.contact_count }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4"><div class="empty-state">No companies yet — add one on the left.</div></td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+  <form class="rc-filters" method="get" action="{{ url_for('contacts_list') }}">
+    {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+    <label class="rc-search">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"><circle cx="7" cy="7" r="4.500"/><path d="m10.500 10.500 3 3"/></svg>
+      <input type="search" name="q" value="{{ search }}" placeholder="Search name, industry, city" aria-label="Search companies by name, industry or city">
+    </label>
+    <button type="submit" class="btn btn-outline btn-sm">Search</button>
+    {% if filtered %}<a href="{{ url_for('contacts_list') }}" class="rc-clear">Clear filters</a>{% endif %}
+  </form>
 </div>
+
+{% if companies %}
+<div class="rc-table-wrap">
+  <table class="rc-table">
+    <thead>
+      <tr>
+        <th>Company</th>
+        <th>Status</th>
+        <th class="c-num">Contacts</th>
+        <th class="c-num">Leads</th>
+        <th class="c-phone">Phone</th>
+        <th class="c-city">City</th>
+        <th class="c-owner">Account owner</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in companies %}
+      <tr class="clickable-row">
+        <td class="c-main">
+          <span class="rc-ident">
+            <span class="rc-avatar is-square" aria-hidden="true">{{ c.initials }}</span>
+            <span class="rc-ident-text">
+              <a class="row-link" href="{{ url_for('company_detail', company_id=c.id) }}">{{ c.name }}</a>
+              <small>{{ c.industry or 'No industry set' }}</small>
+            </span>
+          </span>
+        </td>
+        <td><span class="rc-stage rc-c-{{ (c.status or 'Prospect')|lower }}"><i aria-hidden="true"></i>{{ c.status or 'Prospect' }}</span></td>
+        <td class="c-num">{{ c.contact_count }}</td>
+        <td class="c-num">{{ c.lead_count }}</td>
+        <td class="c-phone">{% if c.phone %}<a class="rc-phone" href="tel:{{ c.phone }}">{{ c.phone }}</a>{% else %}<span class="rc-none">—</span>{% endif %}</td>
+        <td class="c-city">{{ c.city or '—' }}</td>
+        <td class="c-owner">
+          {% if c.owner_name %}<span class="rc-owner"><span class="rc-avatar is-small{% if c.account_owner_id == current_user.id %} is-self{% endif %}" aria-hidden="true">{{ c.owner_initials }}</span>{{ 'You' if c.account_owner_id == current_user.id else c.owner_name }}</span>
+          {% else %}<span class="rc-none">Unassigned</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="rc-empty">
+  {% if filtered %}
+  <h2>No companies match</h2>
+  <p>Try a different search or status.</p>
+  <a href="{{ url_for('contacts_list') }}" class="btn btn-outline btn-sm">Clear filters</a>
+  {% else %}
+  <h2>No companies yet</h2>
+  <p>Add the first company to start keeping contacts, leads and invoices together.</p>
+  <button type="button" class="btn btn-primary btn-sm" data-open-dialog="companyDialog">+ Add Company</button>
+  {% endif %}
+</div>
+{% endif %}
+
+<dialog class="rc-dialog is-wide" id="companyDialog" aria-labelledby="companyTitle">
+  <form method="post" action="{{ url_for('add_company') }}" class="rc-dialog-form">
+    <header class="rc-dialog-head">
+      <h2 id="companyTitle">Add a company</h2>
+      <button type="button" class="rc-dialog-close" data-close-dialog aria-label="Close">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+      </button>
+    </header>
+    <div class="rc-dialog-body">
+      <fieldset class="rc-fieldset">
+        <legend>Basics</legend>
+        <div class="rc-grid">
+          <label class="rc-field is-wide"><span>Company name *</span><input type="text" name="name" placeholder="Company name" required></label>
+          <label class="rc-field"><span>Industry</span><input type="text" name="industry" placeholder="e.g. Manufacturing"></label>
+          <label class="rc-field"><span>Status</span>
+            <select name="status">{% for s in statuses %}<option value="{{ s }}"{% if s == 'Prospect' %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+          </label>
+          {% if users %}
+          <label class="rc-field is-wide"><span>Account owner</span>
+            <select name="account_owner_id">{% for u in users %}<option value="{{ u.id }}"{% if current_user and u.id == current_user.id %} selected{% endif %}>{{ u.name }}</option>{% endfor %}</select>
+          </label>
+          {% endif %}
+        </div>
+      </fieldset>
+
+      <fieldset class="rc-fieldset">
+        <legend>Contact details</legend>
+        <div class="rc-grid">
+          <label class="rc-field"><span>Company email</span><input type="email" name="email" placeholder="name@company.com"></label>
+          <label class="rc-field"><span>Company phone</span><input type="tel" name="phone" placeholder="Phone number"></label>
+          <label class="rc-field"><span>Alternate phone</span><input type="tel" name="alternate_phone" placeholder="Second phone number"></label>
+          <label class="rc-field"><span>Website</span><input type="text" name="website" placeholder="company.com"></label>
+          <label class="rc-field is-wide"><span>Google Business Profile link</span><input type="text" name="gbp_link" placeholder="https://g.page/…"></label>
+        </div>
+      </fieldset>
+
+      <details class="rc-more">
+        <summary>Address</summary>
+        <div class="rc-grid">
+          <label class="rc-field is-wide"><span>Address</span><textarea name="address" rows="2" placeholder="Street address"></textarea></label>
+          <label class="rc-field"><span>City</span><input type="text" name="city" placeholder="City or town"></label>
+          <label class="rc-field"><span>State</span><input type="text" name="state" placeholder="State or territory"></label>
+          <label class="rc-field"><span>Pincode</span><input type="text" name="pincode" placeholder="Postal code"></label>
+          <label class="rc-field"><span>Country</span><input type="text" name="country" placeholder="Country name" value="India"></label>
+        </div>
+      </details>
+
+      <details class="rc-more">
+        <summary>Billing and tax</summary>
+        <div class="rc-grid">
+          <label class="rc-field is-wide"><span>Billing address</span><textarea name="billing_address" rows="2" placeholder="Address used on invoices"></textarea></label>
+          <label class="rc-field"><span>GSTIN</span><input type="text" name="gstin" placeholder="15-character GSTIN"></label>
+          <label class="rc-field"><span>PAN</span><input type="text" name="pan" placeholder="10-character PAN"></label>
+          <label class="rc-field"><span>CIN</span><input type="text" name="cin" placeholder="Corporate identification number"></label>
+        </div>
+      </details>
+
+      <details class="rc-more">
+        <summary>Notes</summary>
+        <label class="rc-field"><span class="rc-sr">Notes</span><textarea name="notes" rows="3" placeholder="Add a note"></textarea></label>
+      </details>
+    </div>
+    <footer class="rc-dialog-foot">
+      <button type="button" class="btn btn-outline btn-sm" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Add company</button>
+    </footer>
+  </form>
+</dialog>
 {% endblock %}

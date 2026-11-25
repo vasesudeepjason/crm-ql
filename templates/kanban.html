@@ -1,13 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Kanban · Lead Desk{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=4">{% endblock %}
+{% block main_class %}rc-page{% endblock %}
 {% block content %}
-<div class="page-header">
+<div class="rc-header">
   <div>
-    <h1 class="page-title">Leads · Kanban</h1>
-    <p class="page-sub">Drag a card into another column to move its stage.</p>
+    <h1 class="rc-heading">Leads</h1>
+    <p class="rc-lede">Drag a card into another column to move its stage.</p>
   </div>
-  <a href="{{ url_for('leads_list') }}" class="btn btn-outline btn-sm">List view</a>
+  <div class="rc-actions">
+    <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm">+ Add Lead</a>
+  </div>
 </div>
+<nav class="rc-views" aria-label="Lead views">
+  <a href="{{ url_for('leads_list') }}">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M3 4h10M3 8h10M3 12h10"/></svg>List
+  </a>
+  <a href="{{ url_for('leads_kanban') }}" aria-current="page">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M3 3h4v10H3zM9 3h4v6H9z"/></svg>Kanban
+  </a>
+</nav>
 
 <div class="kanban-board">
   {% for stage in stages %}

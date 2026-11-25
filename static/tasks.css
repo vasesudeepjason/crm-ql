@@ -414,3 +414,22 @@ html:root .tk-cal-add:hover { color: var(--text); border-color: var(--control-ho
   .tk-cal-task { white-space: normal; padding-block: 8px; font-size: 13px; }
   .tk-cal-side { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---- Project link on a task, and the task list embedded in a project page ---- */
+.tk-project {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 7px; border: 1px solid var(--tk-line); border-radius: var(--control-radius);
+  font: 500 12px/1.5 var(--font-body); color: var(--text-soft); background: var(--content-panel);
+}
+.tk-project svg { flex: none; }
+a.tk-project:hover { color: var(--accent); border-color: var(--control-hover); }
+.tk-badge-sm { flex: none; padding: 1px 6px; font-size: 10.5px; }
+html:root body .tk-project-select select { --control-height: 32px; min-width: 0; flex: 1; }
+.tk-embedded { --tk-cols: minmax(0, 1fr) 96px 110px 104px; margin-top: 8px; }
+.tk-embedded-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 8px; }
+.tk-embedded-head .section-title { margin: 0; }
+.tk-embedded .tk-rows > .tk-row:first-child { border-top: 0; }
+.tk-embedded .tk-nomatch { border-top: 0; }
+@media (max-width: 820px) {
+  .tk-project { max-width: 100%; }
+}
