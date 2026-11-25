@@ -41,8 +41,8 @@
       <span class="theme-toggle-icon theme-toggle-icon-moon">☾</span>
     </button>
     <div class="logo-slot auth-logo">
-      <img src="{{ url_for('static', filename='logo.png') }}" alt="Company logo" class="company-logo company-logo-light" onerror="this.style.display='none'">
-      <img src="{{ url_for('static', filename='logo-light.png') }}" alt="Company logo" class="company-logo company-logo-dark" onerror="this.style.display='none'">
+      <img src="{{ url_for('static', filename='logo.svg') }}" alt="Company logo" class="company-logo company-logo-light" onerror="this.style.display='none'">
+      <img src="{{ url_for('static', filename='logo-light.svg') }}?v=2" alt="Company logo" class="company-logo company-logo-dark" onerror="this.style.display='none'">
     </div>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}

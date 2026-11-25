@@ -76,8 +76,8 @@
   </nav>
   <div class="module-panel">
     <div class="module-panel-header">
-      <img src="{{ url_for('static', filename='logo.png') }}" alt="Quantum" class="panel-logo light-logo">
-      <img src="{{ url_for('static', filename='logo-light.png') }}" alt="Quantum" class="panel-logo dark-logo">
+      <img src="{{ url_for('static', filename='logo.svg') }}" alt="Quantum" class="panel-logo light-logo">
+      <img src="{{ url_for('static', filename='logo-light.svg') }}?v=2" alt="Quantum" class="panel-logo dark-logo">
       <button type="button" class="panel-control" id="sidebarClose" aria-label="Close navigation panel" title="Close navigation panel">{{ icon('collapse') }}</button>
     </div>
     {% for key, label, modules in categories %}
