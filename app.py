@@ -3,6 +3,7 @@ import calendar
 import csv
 import io
 import os
+import shutil
 import base64
 import binascii
 import hashlib
@@ -34,6 +35,10 @@ ROLES = ["telecaller", "field_sales", "manager"]
 APP_TIMEZONE = timezone(timedelta(hours=5, minutes=30), name="Asia/Kolkata")
 FIELD_WORK_AUTO_END = time(18, 30)
 NO_CARD_REASONS = ["No card available", "Forgot to ask", "Contact declined", "Other"]
+VISIT_STATUS_LABELS = {
+    "scheduled": "Upcoming", "checked_in": "In progress", "review_pending": "Review pending",
+    "completed": "Completed", "needs_correction": "Needs correction",
+}
 VISIT_OUTCOMES = ["Interested", "Follow-up Required", "Proposal Requested", "Not Interested", "No Decision", "Contact Unavailable", "Other"]
 
 # ---------- New pipeline ----------
@@ -121,7 +126,44 @@ def _add_cols(db, table, coldefs):
 
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
+    """Create or upgrade the database. Safe to run from several server workers at once.
+
+    Every worker runs this when it starts. Taking the write lock first makes them go one at a
+    time, and doing all the work in a single transaction means a failed upgrade leaves the
+    database exactly as it was. The first upgrade to the Tasks version also keeps a copy of
+    the database file next to it.
+    """
+    db = sqlite3.connect(DB_PATH, timeout=120, isolation_level=None)
+    try:
+        if db.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal":
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # so the file copy below is complete
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            _backup_before_upgrade(db)
+            _init_schema(db)
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+    finally:
+        db.close()
+
+
+def _backup_before_upgrade(db):
+    """Copy the database file aside before the first upgrade that adds the Tasks tables.
+
+    Runs while this process holds the write lock and before it has changed anything, so the
+    copy is a consistent snapshot. Later starts skip it because the Tasks tables exist.
+    """
+    def has_table(name):
+        return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+
+    if has_table("users") and not has_table("work_tasks"):
+        stamp = datetime.now(APP_TIMEZONE).strftime("%Y%m%d-%H%M%S")
+        shutil.copyfile(DB_PATH, f"{DB_PATH}.before-upgrade-{stamp}.bak")
+
+
+def _init_schema(db):
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -573,8 +615,6 @@ def init_db():
     db.execute("CREATE INDEX IF NOT EXISTS idx_chat_pair ON chat_messages(sender_id,recipient_id,id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_chat_unread ON chat_messages(recipient_id,sender_id,id) WHERE is_read=0")
 
-    db.commit()
-    db.close()
 
 
 def now_str():
@@ -2841,6 +2881,43 @@ def _field_photo_dir():
     return os.environ.get("FIELD_PHOTO_DIR", "").strip() or os.path.join(app.instance_path, "field_visit_photos")
 
 
+PHOTO_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def _resolve_photo_file(stored_name):
+    """Path of a stored visit photo, or None.
+
+    Photos may have been converted to another format on disk after they were recorded
+    (for example .jpg to .webp), so fall back to a file with the same name and a
+    different image extension.
+    """
+    folder = _field_photo_dir()
+    path = os.path.join(folder, stored_name)
+    if os.path.isfile(path):
+        return path
+    stem = os.path.splitext(stored_name)[0]
+    for extension in PHOTO_MIME_TYPES:
+        candidate = os.path.join(folder, stem + extension)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _to_webp(raw):
+    """Re-encode a captured JPEG as WebP to save space. Returns None if that is not possible."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            output = io.BytesIO()
+            image.convert("RGB").save(output, "WEBP", quality=80, method=4)
+            return output.getvalue()
+    except Exception:
+        return None
+
+
 def _save_camera_photo(db, visit_id, photo_type, data_url):
     if not data_url:
         return None
@@ -2856,16 +2933,22 @@ def _save_camera_photo(db, visit_id, photo_type, data_url):
     if len(raw) < 4 or not raw.startswith(b"\xff\xd8\xff"):
         raise ValueError("The captured evidence is not a valid JPEG image.")
 
+    # Store as WebP when possible (smaller for the same quality); otherwise keep the JPEG.
+    extension, mime_type = ".jpg", "image/jpeg"
+    webp = _to_webp(raw)
+    if webp:
+        raw, extension, mime_type = webp, ".webp", "image/webp"
+
     upload_dir = _field_photo_dir()
     os.makedirs(upload_dir, exist_ok=True)
-    stored_name = f"{uuid.uuid4().hex}.jpg"
+    stored_name = f"{uuid.uuid4().hex}{extension}"
     with open(os.path.join(upload_dir, stored_name), "wb") as output:
         output.write(raw)
     db.execute(
         """INSERT INTO field_visit_photos
            (visit_id,photo_type,stored_name,mime_type,byte_size,sha256,captured_at,created_at)
            VALUES (?,?,?,?,?,?,?,?)""",
-        (visit_id, photo_type, stored_name, "image/jpeg", len(raw), hashlib.sha256(raw).hexdigest(), now_str(), now_str()),
+        (visit_id, photo_type, stored_name, mime_type, len(raw), hashlib.sha256(raw).hexdigest(), now_str(), now_str()),
     )
     return stored_name
 
@@ -2890,7 +2973,30 @@ def field_visits():
         query += " WHERE v.session_id=?"
         params.append(session_filter)
     query += " ORDER BY v.scheduled_date DESC, v.scheduled_time DESC, v.id DESC"
-    visits = db.execute(query, params).fetchall()
+    every_visit = db.execute(query, params).fetchall()
+
+    # Cards or list; the choice is remembered for the rest of the session.
+    view = session.get("visits_view", "cards")
+    requested_view = request.args.get("view")
+    if requested_view in ("cards", "list") and requested_view != view:
+        view = session["visits_view"] = requested_view
+
+    status_counts = {status: 0 for status in VISIT_STATUS_LABELS}
+    for row in every_visit:
+        if row["status"] in status_counts:
+            status_counts[row["status"]] += 1
+    status_filter = request.args.get("status", "")
+    if status_filter not in VISIT_STATUS_LABELS:
+        status_filter = ""
+    visits = []
+    for row in every_visit:
+        if status_filter and row["status"] != status_filter:
+            continue
+        visit = dict(row)
+        visit["title"] = row["company_name"] or row["lead_name"] or "Field visit"
+        visit["initials"] = _initials(visit["title"])
+        visit["executive_initials"] = _initials(row["executive_name"]) if row["executive_name"] else ""
+        visits.append(visit)
 
     session_today = None
     sessions = []
@@ -2909,6 +3015,8 @@ def field_visits():
     return render_template(
         "field_visits.html", visits=visits, session_today=session_today, sessions=sessions,
         session_duration=_session_duration, today=today_str(), session_filter=session_filter,
+        view=view, status_filter=status_filter, status_counts=status_counts,
+        status_labels=VISIT_STATUS_LABELS, total_all=len(every_visit),
     )
 
 
@@ -3059,7 +3167,9 @@ def field_visit_detail(visit_id):
     return render_template(
         "field_visit_detail.html", visit=visit, photos=photos, work_session=work_session,
         active_session=active_session, outcomes=VISIT_OUTCOMES, no_card_reasons=NO_CARD_REASONS,
-        session_duration=_session_duration,
+        session_duration=_session_duration, status_labels=VISIT_STATUS_LABELS,
+        title=visit["company_name"] or visit["lead_name"] or "Field visit",
+        initials=_initials(visit["company_name"] or visit["lead_name"] or "Field visit"),
     )
 
 
@@ -3257,10 +3367,44 @@ def field_visit_photo(photo_id):
     visit = _get_field_visit(db, row["visit_id"]) if row else None
     if not row or not _can_access_field_visit(current_user(), visit):
         return "Not found", 404
-    path = os.path.join(_field_photo_dir(), row["stored_name"])
-    if not os.path.isfile(path):
+    path = _resolve_photo_file(row["stored_name"])
+    if not path:
         return "Image not found", 404
-    return send_file(path, mimetype=row["mime_type"], as_attachment=False, download_name=f"{row['photo_type']}.jpg")
+    extension = os.path.splitext(path)[1].lower()
+    return send_file(path, mimetype=PHOTO_MIME_TYPES.get(extension, row["mime_type"]), as_attachment=False,
+                     download_name=f"{row['photo_type']}{extension}")
+
+
+@app.cli.command("sync-photos")
+def sync_photos_command():
+    """Update photo records after the files were converted to another format on disk.
+
+    Run this once after converting the photo folder (for example .jpg to .webp):
+        flask --app app sync-photos
+    """
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    updated = unchanged = missing = 0
+    for row in db.execute("SELECT id, stored_name FROM field_visit_photos").fetchall():
+        path = _resolve_photo_file(row["stored_name"])
+        if not path:
+            missing += 1
+            continue
+        name = os.path.basename(path)
+        if name == row["stored_name"]:
+            unchanged += 1
+            continue
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        extension = os.path.splitext(name)[1].lower()
+        db.execute(
+            "UPDATE field_visit_photos SET stored_name=?, mime_type=?, byte_size=?, sha256=? WHERE id=?",
+            (name, PHOTO_MIME_TYPES.get(extension, "application/octet-stream"), len(raw), hashlib.sha256(raw).hexdigest(), row["id"]),
+        )
+        updated += 1
+    db.commit()
+    db.close()
+    print(f"Photo records: {updated} updated, {unchanged} already correct, {missing} with no file on disk.")
 
 
 # ---------- Invoices (manager only) ----------

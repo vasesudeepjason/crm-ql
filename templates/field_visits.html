@@ -1,105 +1,170 @@
 {% extends "base.html" %}
 {% block title %}Field Sales · Lead Desk{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=6">{% endblock %}
+{% block main_class %}rc-page{% endblock %}
 {% block content %}
-<div class="page-header">
+{% set is_manager = current_user.role == 'manager' %}
+
+{% macro status(value) %}
+<span class="rc-stage rc-v-{{ value }}"><i aria-hidden="true"></i>{{ status_labels.get(value, value.replace('_', ' ').title()) }}</span>
+{% endmacro %}
+
+<div class="rc-header">
   <div>
-    <h1 class="page-title">Field Sales</h1>
-    <p class="page-sub">Daily field-work sessions, assignments, independent visits and manager review.</p>
+    <h1 class="rc-heading">Field Sales</h1>
+    <p class="rc-lede">{{ visits|length }} visit{{ '' if visits|length == 1 else 's' }} shown. Daily field work, assignments and manager review.</p>
   </div>
-  <div class="header-actions">
+  <div class="rc-actions">
     {% if current_user.role == 'field_sales' %}
-    <a class="btn btn-outline" href="{{ url_for('add_lead', next='field_visit') }}">+ New lead & visit</a>
-    <a class="btn btn-accent" href="{{ url_for('field_visit_new') }}">+ Independent visit</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('field_visit_new') }}">+ Independent visit</a>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('add_lead', next='field_visit') }}">+ New lead &amp; visit</a>
     {% else %}
-    <a class="btn btn-accent" href="{{ url_for('field_visit_new') }}">+ Assign visit</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('field_visit_new') }}">+ Assign visit</a>
     {% endif %}
   </div>
 </div>
 
 {% if session_filter %}
-<div class="edit-hint">Showing visits linked to field-work session #{{ session_filter }}. <a href="{{ url_for('field_visits') }}">Show all visits</a></div>
+<p class="rc-banner">Showing visits linked to field-work session #{{ session_filter }}. <a class="rc-link" href="{{ url_for('field_visits') }}">Show all visits</a></p>
 {% endif %}
 
 {% if current_user.role == 'field_sales' %}
-<div class="field-session-card {% if session_today and session_today.status == 'active' %}session-active{% endif %}">
+<section class="rc-card rc-session{% if session_today and session_today.status == 'active' %} is-active{% endif %}" aria-label="Today's field work">
   <div>
-    <div class="field-session-label">Today's field work</div>
+    <h2>Today's field work</h2>
     {% if not session_today %}
-      <div class="page-sub">Start before creating or checking in to a visit. Sessions automatically close at 6:30 p.m.</div>
+      <p class="rc-help">Start before creating or checking in to a visit. Sessions close automatically at 6:30 p.m.</p>
     {% elif session_today.status == 'active' %}
-      <div class="field-session-time">Started {{ session_today.started_at[11:16] }} · {{ session_duration(session_today.started_at) }}</div>
+      <p class="rc-session-time">Started {{ session_today.started_at[11:16] }} · {{ session_duration(session_today.started_at) }}</p>
     {% else %}
-      <div class="field-session-time">{{ session_today.started_at[11:16] }}–{{ session_today.ended_at[11:16] }} · {{ session_duration(session_today.started_at, session_today.ended_at) }}</div>
-      <div class="page-sub">Ended by {{ 'the system at 6:30 p.m.' if session_today.end_source == 'system_assumed' else 'you' }}</div>
+      <p class="rc-session-time">{{ session_today.started_at[11:16] }}–{{ session_today.ended_at[11:16] }} · {{ session_duration(session_today.started_at, session_today.ended_at) }}</p>
+      <p class="rc-help">Ended by {{ 'the system at 6:30 p.m.' if session_today.end_source == 'system_assumed' else 'you' }}</p>
     {% endif %}
   </div>
   <div>
     {% if not session_today %}
-    <form method="post" action="{{ url_for('field_work_start') }}"><button class="btn btn-accent">Start Field Work</button></form>
+    <form method="post" action="{{ url_for('field_work_start') }}"><button class="btn btn-primary">Start Field Work</button></form>
     {% elif session_today.status == 'active' %}
     <form method="post" action="{{ url_for('field_work_end') }}"><button class="btn btn-danger">End Field Work</button></form>
-    {% else %}<span class="visit-badge accepted">Closed</span>{% endif %}
+    {% else %}<span class="rc-chip">Closed</span>{% endif %}
   </div>
-</div>
+</section>
 {% endif %}
 
-<div class="visit-filter-row" id="visitFilters">
-  <button class="btn btn-outline btn-sm active" data-filter="all">All</button>
-  <button class="btn btn-outline btn-sm" data-filter="scheduled">Upcoming</button>
-  <button class="btn btn-outline btn-sm" data-filter="checked_in">In progress</button>
-  <button class="btn btn-outline btn-sm" data-filter="review_pending">Review pending</button>
-  <button class="btn btn-outline btn-sm" data-filter="completed">Completed</button>
-  <button class="btn btn-outline btn-sm" data-filter="needs_correction">Needs correction</button>
-</div>
-
-<div class="visit-card-grid" id="visitGrid">
-  {% for v in visits %}
-  <a class="visit-card" data-status="{{ v.status }}" href="{{ url_for('field_visit_detail', visit_id=v.id) }}">
-    <div class="visit-card-head">
-      <span class="visit-badge {{ v.status }}">{{ v.status.replace('_',' ').title() }}</span>
-      <span class="visit-origin {{ v.origin }}">{{ 'Manager-assigned' if v.origin == 'manager_assigned' else 'Executive-initiated' }}</span>
-    </div>
-    <h3>{{ v.company_name or v.lead_name or 'Field visit' }}</h3>
-    {% if v.lead_name %}<div class="page-sub">Lead: {{ v.lead_name }}</div>{% endif %}
-    <div class="visit-card-meta">{{ v.scheduled_date }}{% if v.scheduled_time %} · {{ v.scheduled_time }}{% endif %}</div>
-    <div class="visit-card-meta">{{ v.location_address }}</div>
-    <div class="visit-card-purpose">{{ v.purpose }}</div>
-    {% if current_user.role == 'manager' %}<div class="page-sub">Executive: {{ v.executive_name or 'Unassigned' }}</div>{% endif %}
+<nav class="rc-views" aria-label="Visit views">
+  <a href="{{ url_for('field_visits', view='cards', status=status_filter or None, session=session_filter or None) }}"{% if view == 'cards' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M2.500 2.500h4.500v4.500H2.500zM9 2.500h4.500v4.500H9zM2.500 9h4.500v4.500H2.500zM9 9h4.500v4.500H9z"/></svg>Cards
   </a>
-  {% else %}
-  <div class="empty-state">No field visits yet.</div>
-  {% endfor %}
+  <a href="{{ url_for('field_visits', view='list', status=status_filter or None, session=session_filter or None) }}"{% if view == 'list' %} aria-current="page"{% endif %}>
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M3 4h10M3 8h10M3 12h10"/></svg>List
+  </a>
+</nav>
+
+<div class="rc-toolbar">
+  <nav class="rc-pills" aria-label="Filter by status">
+    <a class="rc-pill{% if not status_filter %} is-on{% endif %}"{% if not status_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('field_visits', session=session_filter or None) }}">All <b>{{ total_all }}</b></a>
+    {% for key, label in status_labels.items() %}
+    <a class="rc-pill rc-v-{{ key }}{% if key == status_filter %} is-on{% endif %}"{% if key == status_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('field_visits', status=key, session=session_filter or None) }}"><i aria-hidden="true"></i>{{ label }} <b>{{ status_counts[key] }}</b></a>
+    {% endfor %}
+  </nav>
 </div>
 
-{% if current_user.role == 'manager' %}
-<h2 class="section-title">Recent field-work sessions</h2>
-<div class="table-card">
-  <table>
-    <thead><tr><th>Date</th><th>Executive</th><th>Start</th><th>End</th><th>Duration</th><th>Visits</th><th>End source</th></tr></thead>
-    <tbody>
-      {% for s in sessions %}
+{% if not visits %}
+<div class="rc-empty">
+  <h2>{{ 'No visits with this status' if status_filter else 'No field visits yet' }}</h2>
+  <p>{{ 'Pick another status above to see more.' if status_filter else 'Visits appear here once one is assigned or started.' }}</p>
+  {% if status_filter %}<a class="btn btn-outline btn-sm" href="{{ url_for('field_visits', session=session_filter or None) }}">Show all visits</a>{% endif %}
+</div>
+
+{% elif view == 'list' %}
+<div class="rc-table-wrap">
+  <table class="rc-table">
+    <thead>
       <tr>
-        <td>{{ s.work_date }}</td><td>{{ s.executive_name or 'Former user' }}</td>
-        <td>{{ s.started_at[11:16] }}</td><td>{{ s.ended_at[11:16] if s.ended_at else 'Active' }}</td>
-        <td>{{ session_duration(s.started_at, s.ended_at) }}</td><td><a href="{{ url_for('field_visits', session=s.id) }}">{{ s.visit_count }} visit{{ '' if s.visit_count == 1 else 's' }}</a></td>
-        <td>{{ 'System-assumed' if s.end_source == 'system_assumed' else ('Executive' if s.end_source else '—') }}</td>
+        <th>Visit</th>
+        <th>Status</th>
+        <th>Scheduled</th>
+        {% if is_manager %}<th class="c-owner">Executive</th>{% endif %}
+        <th class="c-interest">Outcome</th>
+        <th class="c-budget">Address</th>
+        <th class="c-added">Type</th>
       </tr>
-      {% else %}<tr><td colspan="7"><div class="empty-state">No field-work sessions recorded.</div></td></tr>{% endfor %}
+    </thead>
+    <tbody>
+      {% for v in visits %}
+      <tr class="clickable-row">
+        <td class="c-main">
+          <span class="rc-ident">
+            <span class="rc-avatar is-square" aria-hidden="true">{{ v.initials }}</span>
+            <span class="rc-ident-text">
+              <a class="row-link" href="{{ url_for('field_visit_detail', visit_id=v.id) }}">{{ v.title }}</a>
+              <small>{{ ('Lead: ' ~ v.lead_name) if v.lead_name and v.company_name else (v.purpose or 'Field visit') }}</small>
+            </span>
+          </span>
+        </td>
+        <td>{{ status(v.status) }}</td>
+        <td class="c-follow"><span class="rc-follow">{{ v.scheduled_date }}{% if v.scheduled_time %} · {{ v.scheduled_time }}{% endif %}</span></td>
+        {% if is_manager %}
+        <td class="c-owner">{% if v.executive_name %}<span class="rc-owner"><span class="rc-avatar is-small" aria-hidden="true">{{ v.executive_initials }}</span>{{ v.executive_name }}</span>{% else %}<span class="rc-none">{{ 'Former user' if v.assigned_to else 'Unassigned' }}</span>{% endif %}</td>
+        {% endif %}
+        <td class="c-interest">{{ v.outcome or '—' }}</td>
+        <td class="c-budget"><span class="rc-clip">{{ v.location_address }}</span></td>
+        <td class="c-added">{{ 'Assigned' if v.origin == 'manager_assigned' else 'Independent' }}</td>
+      </tr>
+      {% endfor %}
     </tbody>
   </table>
 </div>
+
+{% else %}
+<div class="rc-visit-grid">
+  {% for v in visits %}
+  <a class="rc-card rc-visit" href="{{ url_for('field_visit_detail', visit_id=v.id) }}">
+    <div class="rc-visit-top">
+      {{ status(v.status) }}
+      <span class="rc-chip">{{ 'Assigned' if v.origin == 'manager_assigned' else 'Independent' }}</span>
+    </div>
+    <h3>{{ v.title }}</h3>
+    {% if v.lead_name and v.company_name %}<p class="rc-visit-sub">Lead: {{ v.lead_name }}</p>{% endif %}
+    <dl class="rc-visit-facts">
+      <div><dt>When</dt><dd>{{ v.scheduled_date }}{% if v.scheduled_time %} · {{ v.scheduled_time }}{% endif %}</dd></div>
+      <div><dt>Where</dt><dd>{{ v.location_address }}</dd></div>
+      {% if v.outcome %}<div><dt>Outcome</dt><dd>{{ v.outcome }}</dd></div>{% endif %}
+      {% if is_manager %}<div><dt>Executive</dt><dd>{{ v.executive_name or ('Former user' if v.assigned_to else 'Unassigned') }}</dd></div>{% endif %}
+    </dl>
+    {% if v.purpose %}<p class="rc-visit-purpose">{{ v.purpose }}</p>{% endif %}
+  </a>
+  {% endfor %}
+</div>
 {% endif %}
 
-<script>
-document.querySelectorAll('#visitFilters button').forEach(button => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('#visitFilters button').forEach(b => b.classList.remove('active'));
-    button.classList.add('active');
-    const filter = button.dataset.filter;
-    document.querySelectorAll('#visitGrid .visit-card').forEach(card => {
-      card.style.display = filter === 'all' || card.dataset.status === filter ? '' : 'none';
-    });
-  });
-});
-</script>
+{% if is_manager %}
+<section class="rc-card rc-gap-section" aria-labelledby="fs-sessions">
+  <header class="rc-card-head"><h2 id="fs-sessions">Recent field-work sessions</h2><span class="rc-count">{{ sessions|length }}</span></header>
+  {% if sessions %}
+  <div class="rc-table-wrap is-flush">
+    <table class="rc-table is-compact">
+      <thead><tr><th>Date</th><th>Executive</th><th>Start</th><th>End</th><th class="c-budget">Duration</th><th>Visits</th><th class="c-added">End source</th></tr></thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td>{{ s.work_date }}</td>
+          <td>{{ s.executive_name or 'Former user' }}</td>
+          <td>{{ s.started_at[11:16] }}</td>
+          <td>{{ s.ended_at[11:16] if s.ended_at else 'Active' }}</td>
+          <td class="c-budget">{{ session_duration(s.started_at, s.ended_at) }}</td>
+          <td><a class="rc-link" href="{{ url_for('field_visits', session=s.id) }}">{{ s.visit_count }} visit{{ '' if s.visit_count == 1 else 's' }}</a></td>
+          <td class="c-added">{{ 'System-assumed' if s.end_source == 'system_assumed' else ('Executive' if s.end_source else '—') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="rc-none rc-pad">No field-work sessions recorded.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}
