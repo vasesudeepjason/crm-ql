@@ -50,13 +50,14 @@
     <div class="form-group"><label>Visit date *</label><input type="date" name="scheduled_date" value="{{ today }}" required></div>
     <div class="form-group"><label>Visit time *</label><input type="time" name="scheduled_time" value="{{ now_time }}" required></div>
   </div>
-  <div class="form-group"><label>Location / office address *</label><textarea name="location_address" id="visitAddress" required></textarea></div>
+  <div class="form-group"><label>Location / office address *</label><textarea name="location_address" placeholder="Street address or landmark" id="visitAddress" required></textarea></div>
   <div class="form-group"><label>Contact person</label><input name="contact_person" id="visitContact" placeholder="Person expected at the office"></div>
   <div class="form-group"><label>Purpose *</label><textarea name="purpose" required placeholder="What should this visit accomplish?"></textarea></div>
   <button class="btn btn-accent">{{ 'Assign visit' if current_user.role == 'manager' else 'Create visit' }}</button>
 </form>
 
 <script>
+{
 const leadSelect = document.getElementById('visitLead');
 const companySelect = document.getElementById('visitCompany');
 const address = document.getElementById('visitAddress');
@@ -75,5 +76,6 @@ function applyCompany() {
 leadSelect.addEventListener('change', applyLead);
 companySelect.addEventListener('change', applyCompany);
 applyLead(); applyCompany();
+}
 </script>
 {% endblock %}

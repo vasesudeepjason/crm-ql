@@ -1,0 +1,50 @@
+{# Shared pieces for the Tasks list and the task panel. #}
+{% macro status_icon(status) -%}
+<svg class="tk-status-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  {% if status == 'Complete' %}<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.800 8.200 7 10.400l4.200-4.600" fill="none" stroke="var(--content-panel)" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/>
+  {% elif status == 'To Do' %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500" stroke-dasharray="2.600 2.300"/>
+  {% elif status == 'Planning' %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500"/><circle cx="8" cy="8" r="2" fill="currentColor"/>
+  {% elif status == 'In Progress' %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500"/><path d="M8 4.500V8l2.400 1.500" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"/>
+  {% elif status == 'At Risk' %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500"/><path d="M8 4.500v4.200" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"/><circle cx="8" cy="11.200" r=".900" fill="currentColor"/>
+  {% elif status == 'On Hold' %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500"/><path d="M6.300 5.500v5M9.700 5.500v5" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"/>
+  {% else %}<circle cx="8" cy="8" r="6.250" fill="none" stroke="currentColor" stroke-width="1.500"/><path d="M8 8V1.750A6.250 6.250 0 0 1 13.400 11.100Z" fill="currentColor"/>
+  {% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro status_badge(status) -%}
+<span class="tk-badge tk-st-{{ status|slug }}">{{ status_icon(status) }}{{ status }}</span>
+{%- endmacro %}
+
+{% macro avatars(people, limit=3) -%}
+{% if people %}
+<span class="tk-avatars" aria-label="Assigned to {{ people|map(attribute='name')|join(', ') }}">
+  {% for person in people[:limit] %}<span class="tk-avatar tk-tone-{{ person.tone }}" title="{{ person.name }}" aria-hidden="true">{{ person.initials }}</span>{% endfor %}
+  {% if people|length > limit %}<span class="tk-avatar tk-avatar-more" aria-hidden="true">+{{ people|length - limit }}</span>{% endif %}
+</span>
+{% else %}
+<span class="tk-blank" aria-label="Unassigned">
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.300"><circle cx="8" cy="5.500" r="2.500"/><path d="M3 13.500c.500-2.500 2.400-3.800 5-3.800s4.500 1.300 5 3.800" stroke-linecap="round"/></svg>
+</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro due(view) -%}
+{% if view %}<span class="tk-due-label{% if view.overdue %} is-overdue{% endif %}">{{ view.label }}</span>
+{% else %}
+<span class="tk-blank" aria-label="No due date">
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.300"><rect x="2.500" y="3.500" width="11" height="10" rx="1.500"/><path d="M2.500 6.500h11M5.500 2v3M10.500 2v3" stroke-linecap="round"/></svg>
+</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro priority(value) -%}
+<span class="tk-flag tk-pr-{{ (value or 'none')|lower }}"{% if not value %} aria-label="No priority"{% endif %}>
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.500 14V2.500" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"/><path class="tk-flag-fill" d="M3.500 3h8.300l-2 3 2 3H3.500Z" stroke="currentColor" stroke-width="1.300" stroke-linejoin="round"/></svg>
+  {%- if value %}<span>{{ value }}</span>{% endif %}
+</span>
+{%- endmacro %}
+
+{% macro tags(items) -%}
+{% for tag in items %}<span class="tk-tag tk-tagtone-{{ tag.tone }}">{{ tag.name }}</span>{% endfor %}
+{%- endmacro %}

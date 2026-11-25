@@ -35,9 +35,9 @@
     <div class="card">
       <h2 class="section-title">Edit company</h2>
       <form method="post" action="{{ url_for('edit_company', company_id=company.id) }}">
-        <div class="form-group"><label>Company name *</label><input type="text" name="name" value="{{ company.name }}" required></div>
+        <div class="form-group"><label>Company name *</label><input type="text" name="name" placeholder="Company name" value="{{ company.name }}" required></div>
         <div class="form-row">
-          <div class="form-group"><label>Industry</label><input type="text" name="industry" value="{{ company.industry or '' }}"></div>
+          <div class="form-group"><label>Industry</label><input type="text" name="industry" placeholder="e.g. Manufacturing" value="{{ company.industry or '' }}"></div>
           <div class="form-group">
             <label>Status</label>
             <select name="status">
@@ -45,27 +45,27 @@
             </select>
           </div>
         </div>
-        <div class="form-group"><label>Website</label><input type="text" name="website" value="{{ company.website or '' }}"></div>
+        <div class="form-group"><label>Website</label><input type="text" name="website" placeholder="company.com" value="{{ company.website or '' }}"></div>
         <div class="form-group"><label>GBP Link <span class="page-sub" style="display:inline">(Google Business Profile)</span></label><input type="text" name="gbp_link" value="{{ company.gbp_link or '' }}" placeholder="https://g.page/…"></div>
         <div class="form-row">
-          <div class="form-group"><label>Company Email</label><input type="email" name="email" value="{{ company.email or '' }}"></div>
-          <div class="form-group"><label>Company Phone</label><input type="text" name="phone" value="{{ company.phone or '' }}"></div>
-          <div class="form-group"><label>Alternate Phone</label><input type="text" name="alternate_phone" value="{{ company.alternate_phone or '' }}"></div>
+          <div class="form-group"><label>Company Email</label><input type="email" name="email" placeholder="name@company.com" value="{{ company.email or '' }}"></div>
+          <div class="form-group"><label>Company Phone</label><input type="text" name="phone" placeholder="Phone number" value="{{ company.phone or '' }}"></div>
+          <div class="form-group"><label>Alternate Phone</label><input type="text" name="alternate_phone" placeholder="Second phone number" value="{{ company.alternate_phone or '' }}"></div>
         </div>
-        <div class="form-group"><label>Address</label><textarea name="address">{{ company.address or '' }}</textarea></div>
+        <div class="form-group"><label>Address</label><textarea name="address" placeholder="Street and building">{{ company.address or '' }}</textarea></div>
         <div class="form-row">
-          <div class="form-group"><label>City</label><input type="text" name="city" value="{{ company.city or '' }}"></div>
-          <div class="form-group"><label>State</label><input type="text" name="state" value="{{ company.state or '' }}"></div>
-          <div class="form-group"><label>Pincode</label><input type="text" name="pincode" value="{{ company.pincode or '' }}"></div>
+          <div class="form-group"><label>City</label><input type="text" name="city" placeholder="City or town" value="{{ company.city or '' }}"></div>
+          <div class="form-group"><label>State</label><input type="text" name="state" placeholder="State or territory" value="{{ company.state or '' }}"></div>
+          <div class="form-group"><label>Pincode</label><input type="text" name="pincode" placeholder="Postal code" value="{{ company.pincode or '' }}"></div>
         </div>
-        <div class="form-group"><label>Country</label><input type="text" name="country" value="{{ company.country or 'India' }}"></div>
-        <div class="form-group"><label>Billing address</label><textarea name="billing_address">{{ company.billing_address or '' }}</textarea></div>
+        <div class="form-group"><label>Country</label><input type="text" name="country" placeholder="Country name" value="{{ company.country or 'India' }}"></div>
+        <div class="form-group"><label>Billing address</label><textarea name="billing_address" placeholder="Street, city and postal code">{{ company.billing_address or '' }}</textarea></div>
         <div class="form-row">
-          <div class="form-group"><label>GSTIN</label><input type="text" name="gstin" value="{{ company.gstin or '' }}"></div>
-          <div class="form-group"><label>PAN</label><input type="text" name="pan" value="{{ company.pan or '' }}"></div>
-          <div class="form-group"><label>CIN</label><input type="text" name="cin" value="{{ company.cin or '' }}"></div>
+          <div class="form-group"><label>GSTIN</label><input type="text" name="gstin" placeholder="15-character GSTIN" value="{{ company.gstin or '' }}"></div>
+          <div class="form-group"><label>PAN</label><input type="text" name="pan" placeholder="10-character PAN" value="{{ company.pan or '' }}"></div>
+          <div class="form-group"><label>CIN</label><input type="text" name="cin" placeholder="Corporate identification number" value="{{ company.cin or '' }}"></div>
         </div>
-        <div class="form-group"><label>Notes</label><textarea name="notes">{{ company.notes or '' }}</textarea></div>
+        <div class="form-group"><label>Notes</label><textarea name="notes" placeholder="Add a note">{{ company.notes or '' }}</textarea></div>
         <button type="submit" class="btn btn-primary">Save changes</button>
       </form>
     </div>
@@ -75,7 +75,7 @@
       <form method="post" action="{{ url_for('add_contact', company_id=company.id) }}">
         <div class="form-group">
           <label>Name *</label>
-          <input type="text" name="name" required>
+          <input type="text" name="name" placeholder="Full name" required>
         </div>
         <div class="form-group">
           <label>Designation</label>
@@ -84,17 +84,17 @@
         <div class="form-row">
           <div class="form-group">
             <label>Phone</label>
-            <input type="text" name="phone">
+            <input type="text" name="phone" placeholder="Phone number">
           </div>
           <div class="form-group">
             <label>Alternate Phone</label>
-            <input type="text" name="alternate_phone">
+            <input type="text" name="alternate_phone" placeholder="Second phone number">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label>Email</label>
-            <input type="email" name="email">
+            <input type="email" name="email" placeholder="name@company.com">
           </div>
           <div class="form-group">
             <label>LinkedIn</label>
@@ -104,7 +104,7 @@
         <label class="check-line"><input type="checkbox" name="is_primary" value="1"> Primary contact</label>
         <div class="form-group">
           <label>Notes</label>
-          <textarea name="notes"></textarea>
+          <textarea name="notes" placeholder="Add a note"></textarea>
         </div>
         <button type="submit" class="btn btn-accent">Add contact</button>
       </form>
@@ -145,8 +145,8 @@
         <thead><tr><th>Contact</th><th>Stage</th><th>Interest</th><th>Owner</th><th>Added</th></tr></thead>
         <tbody>
           {% for l in leads %}
-          <tr onclick="window.location='{{ url_for('lead_detail', lead_id=l.id) }}'" style="cursor:pointer">
-            <td>{{ l.name }}</td>
+          <tr class="clickable-row">
+            <td><a class="row-link" href="{{ url_for('lead_detail', lead_id=l.id) }}">{{ l.name }}</a></td>
             <td><span class="stage-pill stage-{{ l.stage|slug }}">{{ l.stage }}</span></td>
             <td>{% if l.interest_level %}<span class="interest-badge interest-{{ l.interest_level|lower }}">{{ l.interest_level }}</span>{% else %}—{% endif %}</td>
             <td>{{ l.owner_name or 'Unassigned' }}</td>
@@ -166,8 +166,8 @@
         <thead><tr><th>Invoice #</th><th>Date</th><th>Total</th></tr></thead>
         <tbody>
           {% for inv in invoices %}
-          <tr onclick="window.location='{{ url_for('invoice_detail', invoice_id=inv.id) }}'" style="cursor:pointer">
-            <td>{{ inv.invoice_no }}</td>
+          <tr class="clickable-row">
+            <td><a class="row-link" href="{{ url_for('invoice_detail', invoice_id=inv.id) }}">{{ inv.invoice_no }}</a></td>
             <td>{{ inv.invoice_date }}</td>
             <td>₹{{ '%.2f'|format(inv.total_amount) }}</td>
           </tr>

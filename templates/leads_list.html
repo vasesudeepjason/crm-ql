@@ -13,11 +13,12 @@
     </div>
 
     <div class="header-actions">
+        <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm desktop-add-lead">+ Add Lead</a>
         <a href="{{ url_for('leads_kanban') }}" class="btn btn-outline btn-sm">
             Kanban view
         </a>
 
-        <a href="{{ url_for('export_leads') }}" class="btn btn-outline btn-sm">
+        <a data-turbo="false" href="{{ url_for('export_leads') }}" class="btn btn-outline btn-sm">
             Export CSV
         </a>
     </div>
@@ -29,11 +30,12 @@
     <input
         type="text"
         name="q"
+        aria-label="Search leads by company, contact, phone, or email"
         placeholder="Search company, contact, phone, email"
         value="{{ search }}"
     >
 
-    <select name="stage" onchange="this.form.submit()">
+    <select name="stage" onchange="this.form.requestSubmit()">
         <option value="">All stages</option>
 
         {% for stage in stages %}
@@ -47,7 +49,7 @@
     </select>
 
 
-    <select name="interest" onchange="this.form.submit()">
+    <select name="interest" onchange="this.form.requestSubmit()">
         <option value="">All interest levels</option>
 
         {% for lvl in interest_levels %}
@@ -103,7 +105,7 @@
 
 
     <a
-        href="{{ url_for('download_template') }}"
+        data-turbo="false" href="{{ url_for('download_template') }}"
         class="btn btn-outline btn-sm"
     >
         Download import template (.xlsx)
@@ -147,7 +149,6 @@
 
             <tr
                 class="clickable-row"
-                data-href="{{ url_for('lead_detail', lead_id=lead.id) }}"
             >
 
                 <td>
@@ -155,7 +156,7 @@
                 </td>
 
                 <td>
-                    {{ lead.name }}
+                    <a class="row-link" href="{{ url_for('lead_detail', lead_id=lead.id) }}">{{ lead.name }}</a>
                 </td>
 
                 <td class="phone">
@@ -248,24 +249,5 @@
 </div>
 
 
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    document.querySelectorAll(".clickable-row").forEach(function (row) {
-
-        row.addEventListener("click", function () {
-
-            const url = this.dataset.href;
-
-            if (url) {
-                window.location.href = url;
-            }
-
-        });
-
-    });
-
-});
-</script>
 
 {% endblock %}

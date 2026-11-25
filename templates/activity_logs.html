@@ -9,15 +9,15 @@
 </div>
 
 <form class="filter-bar" method="get" action="{{ url_for('activity_logs_page') }}">
-  <select name="user" onchange="this.form.submit()">
+  <select name="user" onchange="this.form.requestSubmit()">
     <option value="">All users</option>
     {% for u in users %}<option value="{{ u.id }}" {% if user_filter == u.id|string %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
   </select>
-  <select name="action" onchange="this.form.submit()">
+  <select name="action" onchange="this.form.requestSubmit()">
     <option value="">All actions</option>
     {% for a in actions %}<option value="{{ a }}" {% if a == action_filter %}selected{% endif %}>{{ a }}</option>{% endfor %}
   </select>
-  <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
+  <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.requestSubmit()">
   {% if user_filter or action_filter or date_filter %}
   <a href="{{ url_for('activity_logs_page') }}" class="btn btn-outline btn-sm">Clear</a>
   {% endif %}

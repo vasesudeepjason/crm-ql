@@ -1,0 +1,15 @@
+{% set shown = namespace(count=0) %}
+{% for person in contacts if directory or person.sent_at %}
+  {% set shown.count = shown.count + 1 %}
+  <a class="chat-person" href="{{ url_for('chat',peer_id=person.id,view='people' if directory else 'recent') }}"
+     data-person="{{ person.id }}" data-name="{{ person.name }}"{% if peer and peer.id == person.id %} aria-current="page"{% endif %}>
+    <span class="chat-avatar" aria-hidden="true">{{ person.name[:1]|upper }}</span>
+    <span class="person-copy"><strong>{{ person.name }}</strong>
+      <small>{% if person.sent_at %}{{ 'You: ' if person.last_sender == current_user.id else '' }}{{ person.preview }}{% else %}{{ roles.get(person.role,person.role) }}{% endif %}</small>
+    </span>
+    {% if person.unread %}<span class="chat-unread" aria-label="{{ person.unread }} unread messages">{{ person.unread }}</span>{% endif %}
+  </a>
+{% endfor %}
+{% if not shown.count %}
+  <p class="chat-muted chat-list-note">{% if directory %}No other employees yet.{% else %}No conversations yet. Open People to start one.{% endif %}</p>
+{% endif %}

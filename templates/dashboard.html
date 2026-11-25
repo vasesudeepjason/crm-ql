@@ -1,139 +1,235 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Lead Desk{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=7">{% endblock %}
+{% block main_class %}dash{% endblock %}
 {% block content %}
-<div class="page-header">
+{% set calls_first = current_user.role == 'telecaller' %}
+{% set won = stage_counts['Won'] %}
+{% set open_leads = total_leads - won - stage_counts['Lost'] %}
+{% set due_count = followups_overdue|length + followups_today|length %}
+{% set stage_peak = stage_counts.values()|max %}
+
+{% macro icon(name) %}
+<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  {% if name == 'people' %}<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.400 1.800 6 5"/><path d="M16 5.200a3.200 3.200 0 0 1 0 5.600M18 14.300c1.700.7 2.700 2.300 3 4.700"/>
+  {% elif name == 'plus' %}<circle cx="12" cy="12" r="8.500"/><path d="M12 8.500v7M8.500 12h7"/>
+  {% elif name == 'calendar' %}<rect x="4" y="5.500" width="16" height="14.500" rx="2.500"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4"/>
+  {% elif name == 'trend' %}<path d="M4 16.500 9.500 11l3.500 3.500L20 7.500"/><path d="M15 7.500h5v5"/>
+  {% elif name == 'clock' %}<circle cx="12" cy="12" r="8.500"/><path d="M12 7.500V12l3 2"/>
+  {% endif %}
+</svg>
+{% endmacro %}
+
+{% macro followup_group(title, leads, empty, overdue) %}
+<div class="dash-follow-group">
+  <div class="dash-group-head"><span>{{ title }}</span><span>{{ leads|length }}</span></div>
+  {% if leads %}
+  <ul class="dash-list">
+    {% for lead in leads %}
+    <li>
+      <a href="{{ url_for('lead_detail', lead_id=lead.id) }}" class="dash-row">
+        <span class="dash-avatar{% if overdue %} is-alert{% endif %}" aria-hidden="true">{{ lead.name[:1]|upper }}</span>
+        <span class="dash-row-main">
+          <strong>{{ lead.name }}</strong>
+          <small>{{ lead.company_name or lead.phone }}</small>
+        </span>
+        <span class="dash-row-meta">{{ ('Due ' ~ lead.follow_up_date) if overdue else lead.stage }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dash-empty">{{ empty }}</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro followups_panel() %}
+<section class="dash-card" aria-labelledby="dash-followups">
+  <header class="dash-card-head">
+    <h2 id="dash-followups">Follow-ups</h2>
+    <span class="dash-pill{% if followups_overdue %} is-alert{% endif %}">{{ due_count }} due</span>
+  </header>
+  <div class="dash-follow">
+    {{ followup_group('Overdue', followups_overdue, "No overdue follow-ups. You're on top of it.", true) }}
+    {{ followup_group('Today', followups_today, 'Nothing scheduled for today.', false) }}
+  </div>
+</section>
+{% endmacro %}
+
+<div class="dash-header">
   <div>
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-sub">Here's where your pipeline stands today.</p>
+    <h1 class="dash-title">Dashboard</h1>
+    <p class="dash-lede">{{ 'Your follow-ups and pipeline for today.' if calls_first else "Here's where your pipeline stands today." }}</p>
+  </div>
+  <div class="header-actions">
+    <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-sm desktop-add-lead">+ Add Lead</a>
+    <a href="{{ url_for('leads_list') }}" class="btn btn-outline btn-sm">All leads</a>
   </div>
 </div>
 
-<div class="stat-grid">
-  <div class="stat-card">
-    <div class="stat-value">{{ total_leads }}</div>
-    <div class="stat-label">Total leads</div>
+<div class="dash-kpis">
+  <div class="dash-kpi is-lead">
+    <span class="dash-kpi-label">Total leads</span>
+    <span class="dash-chip">{{ icon('people') }}</span>
+    <strong class="dash-kpi-value">{{ total_leads }}</strong>
+    <span class="dash-kpi-note"><b>{{ open_leads }}</b> open in pipeline</span>
   </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ added_today }}</div>
-    <div class="stat-label">Added today</div>
+  <div class="dash-kpi">
+    <span class="dash-kpi-label">Added today</span>
+    <span class="dash-chip">{{ icon('plus') }}</span>
+    <strong class="dash-kpi-value">{{ added_today }}</strong>
+    <span class="dash-kpi-note">New since midnight</span>
   </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ added_week }}</div>
-    <div class="stat-label">Added this week</div>
+  <div class="dash-kpi">
+    <span class="dash-kpi-label">Added this week</span>
+    <span class="dash-chip">{{ icon('calendar') }}</span>
+    <strong class="dash-kpi-value">{{ added_week }}</strong>
+    <span class="dash-kpi-note">Last 7 days</span>
   </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ conversion_rate }}%</div>
-    <div class="stat-label">Conversion rate</div>
+  <div class="dash-kpi">
+    <span class="dash-kpi-label">Conversion rate</span>
+    <span class="dash-chip">{{ icon('trend') }}</span>
+    <strong class="dash-kpi-value">{{ conversion_rate }}%</strong>
+    <span class="dash-kpi-note"><b>{{ won }}</b> won of {{ total_leads }}</span>
+  </div>
+  <div class="dash-kpi">
+    <span class="dash-kpi-label">Follow-ups due</span>
+    <span class="dash-chip{% if followups_overdue %} is-alert{% endif %}">{{ icon('clock') }}</span>
+    <strong class="dash-kpi-value">{{ due_count }}</strong>
+    <span class="dash-kpi-note"><b>{{ followups_overdue|length }}</b> overdue</span>
   </div>
 </div>
 
-<h2 class="section-title">Pipeline</h2>
-<div class="pipeline">
-  {% for stage in stages %}
-  <a href="{{ url_for('leads_list', stage=stage) }}" class="pipeline-seg {{ stage|slug }}">
-    <div class="pipeline-count">{{ stage_counts[stage] }}</div>
-    <div class="pipeline-label">{{ stage }}</div>
-  </a>
-  {% endfor %}
+{% if calls_first %}{{ followups_panel() }}{% endif %}
+
+<div class="dash-main">
+  <section class="dash-chart" aria-labelledby="dash-trend">
+    <header class="dash-chart-head">
+      <h2 id="dash-trend">Leads added, last 30 days</h2>
+      <span class="dash-legend"><i aria-hidden="true"></i>{{ trend_total }} leads</span>
+    </header>
+    {% if trend_max %}
+    <div class="dash-plot">
+      <span class="dash-plot-max">{{ trend_max }}</span>
+      <svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" aria-label="Leads added per day over the last 30 days. Peak {{ trend_max }} in a day, {{ trend_total }} in total.">
+        <defs>
+          <pattern id="dashHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" class="dash-hatch"/>
+          </pattern>
+        </defs>
+        <polygon class="dash-area" points="0,240 {% for p in lead_trend %}{{ p.x }},{{ p.y }} {% endfor %}1000,240"/>
+        <polyline class="dash-line" points="{% for p in lead_trend %}{{ p.x }},{{ p.y }} {% endfor %}"/>
+        {% for p in lead_trend %}
+        <rect class="dash-hit" x="{{ p.x - 17.200 }}" y="0" width="34.400" height="240"><title>{{ p.label }}: {{ p.count }} lead{{ '' if p.count == 1 else 's' }}</title></rect>
+        {% endfor %}
+      </svg>
+    </div>
+    <div class="dash-axis" aria-hidden="true">
+      <span>{{ lead_trend[0].label }}</span>
+      <span>{{ lead_trend[(lead_trend|length // 2)].label }}</span>
+      <span>{{ lead_trend[-1].label }}</span>
+    </div>
+    {% else %}
+    <p class="dash-empty dash-plot-empty">No leads were added in the last 30 days.</p>
+    {% endif %}
+  </section>
+
+  <section class="dash-card" aria-labelledby="dash-pipeline">
+    <header class="dash-card-head">
+      <h2 id="dash-pipeline">Pipeline by stage</h2>
+      <a href="{{ url_for('leads_kanban') }}" class="dash-link">Open kanban</a>
+    </header>
+    <div class="dash-stages">
+      {% for stage in stages %}
+      {% set n = stage_counts[stage] %}
+      <a href="{{ url_for('leads_list', stage=stage) }}" class="dash-stage dash-s-{{ stage|slug }}">
+        <span class="dash-chip is-small" aria-hidden="true"><i></i></span>
+        <span class="dash-meter">
+          <span class="dash-meter-fill" style="width: {{ ((n / stage_peak) * 100)|round(1) if stage_peak else 0 }}%"></span>
+          <span class="dash-meter-label">{{ stage }}</span>
+        </span>
+        <span class="dash-stage-count">{{ n }}</span>
+        <span class="dash-stage-share">{{ ((n / total_leads) * 100)|round|int if total_leads else 0 }}%</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
 </div>
 
-<h2 class="section-title">Overdue follow-ups</h2>
-<div class="followup-list">
-  {% if followups_overdue %}
-    {% for lead in followups_overdue %}
-    <a href="{{ url_for('lead_detail', lead_id=lead.id) }}" class="followup-row">
-      <span class="name">{{ lead.name }}</span>
-      <span class="meta">{{ lead.phone }} · was due {{ lead.follow_up_date }}</span>
-    </a>
-    {% endfor %}
-  {% else %}
-    <div class="empty-state">No overdue follow-ups. You're on top of it.</div>
-  {% endif %}
-</div>
-
-<h2 class="section-title">Today's follow-ups</h2>
-<div class="followup-list">
-  {% if followups_today %}
-    {% for lead in followups_today %}
-    <a href="{{ url_for('lead_detail', lead_id=lead.id) }}" class="followup-row">
-      <span class="name">{{ lead.name }}</span>
-      <span class="meta">{{ lead.phone }} · {{ lead.stage }}</span>
-    </a>
-    {% endfor %}
-  {% else %}
-    <div class="empty-state">Nothing scheduled for today.</div>
-  {% endif %}
-</div>
+{% if not calls_first %}{{ followups_panel() }}{% endif %}
 
 {% if team_stats is not none %}
-<h2 class="section-title">Field Sales today</h2>
-<div class="stat-grid">
-  <div class="stat-card"><div class="stat-value">{{ field_visit_stats.scheduled_today }}</div><div class="stat-label">Visits scheduled</div></div>
-  <div class="stat-card"><div class="stat-value">{{ field_visit_stats.completed_today }}</div><div class="stat-label">Visits submitted</div></div>
-  <div class="stat-card"><div class="stat-value">{{ field_visit_stats.review_pending }}</div><div class="stat-label">Awaiting review</div></div>
-  <div class="stat-card"><div class="stat-value">{{ field_visit_stats.followups_due }}</div><div class="stat-label">Visit follow-ups due</div></div>
-</div>
-<div class="table-card">
-  <table>
-    <thead><tr><th>Executive</th><th>Started</th><th>Ended</th><th>Visits</th><th>End source</th></tr></thead>
-    <tbody>
-      {% for s in field_session_rows %}<tr><td>{{ s.executive_name or 'Former user' }}</td><td>{{ s.started_at[11:16] }}</td><td>{{ s.ended_at[11:16] if s.ended_at else 'Active' }}</td><td>{{ s.visit_count }}</td><td>{{ 'System-assumed' if s.end_source == 'system_assumed' else ('Executive' if s.end_source else '—') }}</td></tr>
-      {% else %}<tr><td colspan="5"><div class="empty-state">No Field Sales sessions today.</div></td></tr>{% endfor %}
-    </tbody>
-  </table>
-</div>
-{% if field_outcome_stats %}
-<div class="card" style="margin-top:14px">
-  <h3 class="section-title">Visit outcomes this month</h3>
-  <div class="tag-list">{% for row in field_outcome_stats %}<span class="tag">{{ row.outcome }} · {{ row.count }}</span>{% endfor %}</div>
-</div>
-{% endif %}
+<section class="dash-card" aria-labelledby="dash-team">
+  <header class="dash-card-head">
+    <h2 id="dash-team">Telecaller performance</h2>
+    <a href="{{ url_for('users_list') }}" class="dash-link">Manage users</a>
+  </header>
+  <div class="table-card dash-table">
+    <table>
+      <thead>
+        <tr><th>Telecaller</th><th>Calls today</th><th>Leads added</th><th>Interested</th><th>Qualified</th><th>Won</th></tr>
+      </thead>
+      <tbody>
+        {% for t in team_stats %}
+        <tr>
+          <td><span class="dash-person"><span class="dash-avatar" aria-hidden="true">{{ t.name[:1]|upper }}</span>{{ t.name }}</span></td>
+          <td>{{ t.calls_today }}</td>
+          <td>{{ t.leads_added }}</td>
+          <td>{{ t.interested }}</td>
+          <td>{{ t.qualified }}</td>
+          <td>{{ t.won }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state">No telecallers added yet.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 
-<h2 class="section-title">Telecaller performance</h2>
-<div class="table-card">
-  <table>
-    <thead>
-      <tr><th>Telecaller</th><th>Calls today</th><th>Leads added</th><th>Interested</th><th>Qualified</th><th>Won</th></tr>
-    </thead>
-    <tbody>
-      {% for t in team_stats %}
-      <tr>
-        <td>{{ t.name }}</td>
-        <td>{{ t.calls_today }}</td>
-        <td>{{ t.leads_added }}</td>
-        <td>{{ t.interested }}</td>
-        <td>{{ t.qualified }}</td>
-        <td>{{ t.won }}</td>
-      </tr>
+<div class="dash-pair">
+  <section class="dash-card" aria-labelledby="dash-field">
+    <header class="dash-card-head">
+      <h2 id="dash-field">Field sales today</h2>
+      <a href="{{ url_for('field_visits') }}" class="dash-link">All visits</a>
+    </header>
+    <div class="dash-strip">
+      <div><strong>{{ field_visit_stats.scheduled_today }}</strong><span>Visits scheduled</span></div>
+      <div><strong>{{ field_visit_stats.completed_today }}</strong><span>Visits submitted</span></div>
+      <div><strong>{{ field_visit_stats.review_pending }}</strong><span>Awaiting review</span></div>
+      <div><strong>{{ field_visit_stats.followups_due }}</strong><span>Visit follow-ups due</span></div>
+    </div>
+    <div class="table-card dash-table">
+      <table>
+        <thead><tr><th>Executive</th><th>Started</th><th>Ended</th><th>Visits</th><th>End source</th></tr></thead>
+        <tbody>
+          {% for s in field_session_rows %}<tr><td><span class="dash-person"><span class="dash-avatar" aria-hidden="true">{{ (s.executive_name or 'F')[:1]|upper }}</span>{{ s.executive_name or 'Former user' }}</span></td><td>{{ s.started_at[11:16] }}</td><td>{{ s.ended_at[11:16] if s.ended_at else 'Active' }}</td><td>{{ s.visit_count }}</td><td>{{ 'System-assumed' if s.end_source == 'system_assumed' else ('Executive' if s.end_source else '—') }}</td></tr>
+          {% else %}<tr><td colspan="5"><div class="empty-state">No Field Sales sessions today.</div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="dash-card" aria-labelledby="dash-month">
+    <header class="dash-card-head">
+      <h2 id="dash-month">This month</h2>
+    </header>
+    <div class="dash-strip">
+      <div><strong>{{ monthly_stats.total_leads }}</strong><span>Leads added</span></div>
+      <div><strong>{{ monthly_stats.interested_pct }}%</strong><span>Interested</span></div>
+      <div><strong>{{ monthly_stats.qualified_pct }}%</strong><span>Qualified</span></div>
+      <div><strong>{{ monthly_stats.conversion_rate }}%</strong><span>Won (conversion rate)</span></div>
+    </div>
+    <div class="dash-card-body">
+      <h3 class="dash-sub">Visit outcomes</h3>
+      {% if field_outcome_stats %}
+      <div class="tag-list">{% for row in field_outcome_stats %}<span class="tag">{{ row.outcome }} · {{ row.count }}</span>{% endfor %}</div>
       {% else %}
-      <tr><td colspan="6"><div class="empty-state">No telecallers added yet.</div></td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-<h2 class="section-title">Monthly statistics</h2>
-<div class="stat-grid">
-  <div class="stat-card">
-    <div class="stat-value">{{ monthly_stats.total_leads }}</div>
-    <div class="stat-label">Total leads (this month)</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ monthly_stats.interested_pct }}%</div>
-    <div class="stat-label">Interested %</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ monthly_stats.qualified_pct }}%</div>
-    <div class="stat-label">Qualified %</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ monthly_stats.won_pct }}%</div>
-    <div class="stat-label">Won %</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value">{{ monthly_stats.conversion_rate }}%</div>
-    <div class="stat-label">Conversion rate</div>
-  </div>
+      <p class="dash-empty is-inline">No visit outcomes recorded this month.</p>
+      {% endif %}
+    </div>
+  </section>
 </div>
 {% endif %}
 {% endblock %}

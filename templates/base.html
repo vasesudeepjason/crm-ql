@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}Lead Desk{% endblock %}</title>
+<meta name="turbo-cache-control" content="no-cache">
+<meta name="turbo-prefetch" content="false">
+<meta name="turbo-refresh-scroll" content="preserve">
+<meta name="crm-account" content="{{ current_user.id }}-{{ current_user.role }}" data-turbo-track="reload">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..700&display=swap" data-turbo-track="reload">
 <script>
 // Applied before the stylesheet loads, so there's no flash of the wrong theme.
 (function () {
@@ -13,12 +20,16 @@
   } catch (e) {}
 })();
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=19">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=26" data-turbo-track="reload">
+<link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}?v=5" data-turbo-track="reload">
+<link rel="stylesheet" href="{{ url_for('static', filename='interface.css') }}?v=16" data-turbo-track="reload">
+{% block page_styles %}{% endblock %}
+<script src="{{ url_for('static', filename='vendor/turbo-8.0.23/turbo.es2017-esm.js') }}" type="module" data-turbo-track="reload"></script>
+<script src="{{ url_for('static', filename='navigation.js') }}?v=3" defer data-turbo-track="reload"></script>
+<script src="{{ url_for('static', filename='reminder-notice.js') }}?v=2" defer></script>
 </head>
 <body>
-<div class="shell">
+<div class="shell crm-shell">
   <div class="mobile-topbar">
     <button type="button" class="menu-toggle" id="menuToggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
       <span class="menu-toggle-bar"></span>
@@ -31,52 +42,10 @@
 
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
-  <aside class="sidebar" id="sidebar">
-    <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">✕</button>
-    <div class="logo-slot">
-      <img src="{{ url_for('static', filename='logo.png') }}" alt="Company logo" class="company-logo company-logo-light" onerror="this.style.display='none'">
-      <img src="{{ url_for('static', filename='logo-light.png') }}" alt="Company logo" class="company-logo company-logo-dark" onerror="this.style.display='none'">
-    </div>
-    <div class="brand">
-      <span class="brand-mark">●</span>
-      <span class="brand-name">Lead Desk</span>
-      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch between light and dark mode">
-        <span class="theme-toggle-icon theme-toggle-icon-sun">☀</span>
-        <span class="theme-toggle-icon theme-toggle-icon-moon">☾</span>
-      </button>
-    </div>
-    <form class="sidebar-search" method="get" action="{{ url_for('global_search') }}">
-      <input type="text" name="q" placeholder="Search company, contact, phone, GSTIN…" value="{{ request.args.get('q','') if request.endpoint == 'global_search' else '' }}">
-    </form>
-    <nav class="nav">
-      <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
-      <a href="{{ url_for('leads_list') }}" class="nav-link {% if request.endpoint in ['leads_list','lead_detail'] %}active{% endif %}">Leads (List)</a>
-      <a href="{{ url_for('leads_kanban') }}" class="nav-link {% if request.endpoint == 'leads_kanban' %}active{% endif %}">Leads (Kanban)</a>
-      <a href="{{ url_for('contacts_list') }}" class="nav-link {% if request.endpoint in ['contacts_list','company_detail'] %}active{% endif %}">Companies</a>
-      <a href="{{ url_for('projects_list') }}" class="nav-link {% if request.endpoint in ['projects_list','project_new','project_detail'] %}active{% endif %}">Projects</a>
-      <a href="{{ url_for('my_tasks') }}" class="nav-link {% if request.endpoint == 'my_tasks' %}active{% endif %}">My Tasks</a>
-      {% if current_user and current_user.role in ['manager','field_sales'] %}
-      <a href="{{ url_for('field_visits') }}" class="nav-link {% if request.endpoint in ['field_visits','field_visit_new','field_visit_detail'] %}active{% endif %}">Field Sales</a>
-      {% endif %}
-      {% if current_user and current_user.role == 'manager' %}
-      <a href="{{ url_for('invoices_list') }}" class="nav-link {% if request.endpoint in ['invoices_list','invoice_new','invoice_detail'] %}active{% endif %}">Invoices</a>
-       <a href="{{ url_for('activity_logs_page') }}" class="nav-link {% if request.endpoint == 'activity_logs_page' %}active{% endif %}">Activity Logs</a>
-       <a href="{{ url_for('company_settings') }}" class="nav-link {% if request.endpoint == 'company_settings' %}active{% endif %}">Invoice Settings</a>
-       <a href="{{ url_for('users_list') }}" class="nav-link {% if request.endpoint == 'users_list' %}active{% endif %}">Users</a>
-      {% endif %}
-    </nav>
-    <a href="{{ url_for('add_lead') }}" class="btn btn-primary btn-block">+ Add Lead</a>
+  {% include "_navigation.html" %}
 
-    {% if current_user %}
-    <div class="user-card">
-      <div class="user-card-name">{{ current_user.name }}</div>
-      <div class="user-card-role">{{ 'Customer Relations Manager' if current_user.role == 'manager' else ('Field Sales Executive' if current_user.role == 'field_sales' else 'Telecaller') }}</div>
-      <a href="{{ url_for('logout') }}" class="user-card-logout">Log out</a>
-    </div>
-    {% endif %}
-  </aside>
-
-  <main class="content">
+  <main tabindex="-1" class="content {% block main_class %}{% endblock %}">
+    <div class="due-notice" data-reminders-url="{{ url_for('due_reminders') }}" aria-live="polite"><a hidden></a></div>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flash-stack">
@@ -90,53 +59,5 @@
   </main>
 </div>
 
-<script>
-(function () {
-  var sidebar = document.getElementById('sidebar');
-  var backdrop = document.getElementById('sidebarBackdrop');
-  var openBtn = document.getElementById('menuToggle');
-  var closeBtn = document.getElementById('sidebarClose');
-  var themeBtn = document.getElementById('themeToggle');
-
-  function openSidebar() {
-    sidebar.classList.add('open');
-    backdrop.classList.add('open');
-    document.body.classList.add('sidebar-locked');
-    openBtn.setAttribute('aria-expanded', 'true');
-  }
-
-  function closeSidebar() {
-    sidebar.classList.remove('open');
-    backdrop.classList.remove('open');
-    document.body.classList.remove('sidebar-locked');
-    openBtn.setAttribute('aria-expanded', 'false');
-  }
-
-  if (openBtn) openBtn.addEventListener('click', openSidebar);
-  if (closeBtn) closeBtn.addEventListener('click', closeSidebar);
-  if (backdrop) backdrop.addEventListener('click', closeSidebar);
-
-  // Close the drawer automatically when a nav link is tapped
-  sidebar.querySelectorAll('.nav-link, .btn-block, .user-card-logout').forEach(function (el) {
-    el.addEventListener('click', closeSidebar);
-  });
-
-  // Keep drawer state sane if the viewport is resized past the mobile breakpoint
-  window.addEventListener('resize', function () {
-    if (window.innerWidth > 900) closeSidebar();
-  });
-
-  // Light / dark mode toggle, persisted across visits
-  if (themeBtn) {
-    themeBtn.addEventListener('click', function () {
-      var root = document.documentElement;
-      var isLight = root.getAttribute('data-theme') === 'light';
-      var next = isLight ? 'dark' : 'light';
-      root.setAttribute('data-theme', next);
-      try { localStorage.setItem('leaddesk-theme', next); } catch (e) {}
-    });
-  }
-})();
-</script>
 </body>
 </html>

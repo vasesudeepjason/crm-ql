@@ -9,7 +9,7 @@
 </div>
 
 <form class="filter-bar" method="get" action="{{ url_for('global_search') }}">
-  <input type="text" name="q" placeholder="Search company, contact, phone, email, GSTIN, invoice number" value="{{ q }}">
+  <input type="text" name="q" aria-label="Search CRM records" placeholder="Search company, contact, phone, email, GSTIN, invoice number" value="{{ q }}">
   <button type="submit" class="btn btn-outline btn-sm">Search</button>
 </form>
 
@@ -23,8 +23,8 @@
     <thead><tr><th>Company</th><th>Industry</th><th>GSTIN</th><th>Phone</th></tr></thead>
     <tbody>
       {% for c in results.companies %}
-      <tr onclick="window.location='{{ url_for('company_detail', company_id=c.id) }}'" style="cursor:pointer">
-        <td>{{ c.name }}</td><td>{{ c.industry or '—' }}</td><td>{{ c.gstin or '—' }}</td><td>{{ c.phone or '—' }}</td>
+      <tr class="clickable-row">
+        <td><a class="row-link" href="{{ url_for('company_detail', company_id=c.id) }}">{{ c.name }}</a></td><td>{{ c.industry or '—' }}</td><td>{{ c.gstin or '—' }}</td><td>{{ c.phone or '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="4"><div class="empty-state">No matching companies.</div></td></tr>
@@ -39,8 +39,8 @@
     <thead><tr><th>Contact</th><th>Company</th><th>Phone</th><th>Email</th></tr></thead>
     <tbody>
       {% for c in results.contacts %}
-      <tr onclick="window.location='{{ url_for('company_detail', company_id=c.company_id) }}'" style="cursor:pointer">
-        <td>{{ c.name }}</td><td>{{ c.company_name or '—' }}</td><td>{{ c.phone or '—' }}</td><td>{{ c.email or '—' }}</td>
+      <tr class="clickable-row">
+        <td><a class="row-link" href="{{ url_for('company_detail', company_id=c.company_id) }}">{{ c.name }}</a></td><td>{{ c.company_name or '—' }}</td><td>{{ c.phone or '—' }}</td><td>{{ c.email or '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="4"><div class="empty-state">No matching contacts.</div></td></tr>
@@ -55,8 +55,8 @@
     <thead><tr><th>Contact</th><th>Company</th><th>Stage</th><th>Phone</th></tr></thead>
     <tbody>
       {% for l in results.leads %}
-      <tr onclick="window.location='{{ url_for('lead_detail', lead_id=l.id) }}'" style="cursor:pointer">
-        <td>{{ l.name }}</td><td>{{ l.company_name or '—' }}</td>
+      <tr class="clickable-row">
+        <td><a class="row-link" href="{{ url_for('lead_detail', lead_id=l.id) }}">{{ l.name }}</a></td><td>{{ l.company_name or '—' }}</td>
         <td><span class="stage-pill stage-{{ l.stage|slug }}">{{ l.stage }}</span></td>
         <td>{{ l.phone }}</td>
       </tr>
@@ -74,8 +74,8 @@
     <thead><tr><th>Invoice #</th><th>Billed to</th><th>Date</th></tr></thead>
     <tbody>
       {% for inv in results.invoices %}
-      <tr onclick="window.location='{{ url_for('invoice_detail', invoice_id=inv.id) }}'" style="cursor:pointer">
-        <td>{{ inv.invoice_no }}</td><td>{{ inv.bill_name }}</td><td>{{ inv.invoice_date }}</td>
+      <tr class="clickable-row">
+        <td><a class="row-link" href="{{ url_for('invoice_detail', invoice_id=inv.id) }}">{{ inv.invoice_no }}</a></td><td>{{ inv.bill_name }}</td><td>{{ inv.invoice_date }}</td>
       </tr>
       {% else %}
       <tr><td colspan="3"><div class="empty-state">No matching invoices.</div></td></tr>

@@ -1,10 +1,12 @@
 import sqlite3
+import calendar
 import csv
 import io
 import os
 import base64
 import binascii
 import hashlib
+import hmac
 import uuid
 from dotenv import load_dotenv
 
@@ -524,6 +526,16 @@ def init_db():
         )
     """)
     db.execute("""
+        CREATE TABLE IF NOT EXISTS project_personal_notes (
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, user_id)
+        )
+    """)
+    db.execute("""
         CREATE TABLE IF NOT EXISTS project_activities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
@@ -538,6 +550,29 @@ def init_db():
     db.execute("CREATE INDEX IF NOT EXISTS idx_projects_manager ON projects(project_manager_id, status)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee ON project_tasks(assignee_id, status, due_date)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)")
+    _add_cols(db, "project_tasks", [("start_date", "TEXT")])
+    _init_work_tasks(db)
+    db.execute("""CREATE TABLE IF NOT EXISTS personal_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        remind_at TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user_time ON personal_reminders(user_id, remind_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        sent_at TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        client_id TEXT NOT NULL,
+        CHECK (sender_id != recipient_id),
+        UNIQUE (sender_id, client_id)
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_chat_pair ON chat_messages(sender_id,recipient_id,id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_chat_unread ON chat_messages(recipient_id,sender_id,id) WHERE is_read=0")
 
     db.commit()
     db.close()
@@ -1112,6 +1147,29 @@ def dashboard():
     won = stage_counts.get("Won", 0)
     conversion_rate = round((won / total_leads) * 100, 1) if total_leads else 0
 
+    # Leads added per day for the dashboard trend chart (last 30 days, oldest first).
+    trend_days = 30
+    trend_start = datetime.now(APP_TIMEZONE).date() - timedelta(days=trend_days - 1)
+    trend_counts = {
+        row["d"]: row["c"]
+        for row in db.execute(
+            f"SELECT date(created_at) d, COUNT(*) c FROM leads WHERE {clause} AND date(created_at) >= ? GROUP BY d",
+            [*params, trend_start.strftime("%Y-%m-%d")],
+        )
+    }
+    trend_max = max(trend_counts.values(), default=0)
+    lead_trend = []
+    for i in range(trend_days):
+        day = trend_start + timedelta(days=i)
+        count = trend_counts.get(day.strftime("%Y-%m-%d"), 0)
+        lead_trend.append({
+            "label": day.strftime("%d %b"),
+            "count": count,
+            # Chart coordinates in a 0-1000 by 0-240 box; 12 units of headroom above the peak.
+            "x": round(i * 1000 / (trend_days - 1), 1),
+            "y": round(240 - (count / trend_max) * 228, 1) if trend_max else 240,
+        })
+
     followups_today = db.execute(
         f"""SELECT leads.*, companies.name AS company_name FROM leads
             LEFT JOIN companies ON companies.id = leads.company_id
@@ -1205,6 +1263,9 @@ def dashboard():
         added_today=added_today,
         added_week=added_week,
         conversion_rate=conversion_rate,
+        lead_trend=lead_trend,
+        trend_max=trend_max,
+        trend_total=sum(trend_counts.values()),
         followups_today=followups_today,
         followups_overdue=followups_overdue,
         team_stats=team_stats,
@@ -2055,7 +2116,11 @@ def projects_list():
         "completed": sum(1 for p in projects if p["status"] == "Completed"),
         "tasks": sum(p["task_count"] or 0 for p in projects),
     }
-    return render_template("projects.html", projects=projects, summary=summary)
+    view = session.get("projects_view", "cards")
+    requested_view = request.args.get("view")
+    if requested_view in ("cards", "details") and requested_view != view:
+        view = session["projects_view"] = requested_view
+    return render_template("projects.html", projects=projects, summary=summary, view=view)
 
 
 @app.route("/projects/new", methods=["GET", "POST"])
@@ -2121,25 +2186,65 @@ def _project_detail_row(db, project_id, user):
         LEFT JOIN companies c ON c.id=p.company_id WHERE p.id=? AND {clause}""", [project_id, *params]).fetchone()
 
 
-@app.route("/projects/<int:project_id>")
+@app.route("/projects/<int:project_id>", methods=["GET", "POST"])
 @login_required
 def project_detail(project_id):
     db = get_db()
     user = current_user()
+    if request.method == "POST":
+        expected = session.get("project_note_token")
+        if not expected or not hmac.compare_digest(expected.encode(), request.form.get("token", "").encode()):
+            abort(403)
+        # Check assignment and revision in the same transaction as the write.
+        db.execute("BEGIN IMMEDIATE")
     project = _project_detail_row(db, project_id, user)
     if not project:
+        if request.method == "POST":
+            abort(403)
         flash("Project not found, or it is not assigned to you.", "error")
         return redirect(url_for("projects_list"))
     members = db.execute("SELECT u.id,u.name,u.role FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=? ORDER BY u.name", (project_id,)).fetchall()
     tasks = db.execute("""SELECT t.*,u.name AS assignee_name FROM project_tasks t LEFT JOIN users u ON u.id=t.assignee_id
         WHERE t.project_id=? ORDER BY CASE t.status WHEN 'In Progress' THEN 0 WHEN 'To Do' THEN 1 WHEN 'Internal Review' THEN 2 WHEN 'Client Review' THEN 3 ELSE 4 END,
         t.due_date IS NULL,t.due_date,t.id DESC""", (project_id,)).fetchall()
+    assigned = (project["project_manager_id"] == user["id"]
+                or any(member["id"] == user["id"] for member in members)
+                or any(task["assignee_id"] == user["id"] for task in tasks))
+    note = None
+    draft = ""
+    conflict = False
+    if assigned:
+        note = db.execute("SELECT body, revision, updated_at FROM project_personal_notes WHERE project_id=? AND user_id=?",
+                          (project_id, user["id"])).fetchone()
+        draft = note["body"] if note else ""
+        session.setdefault("project_note_token", uuid.uuid4().hex)
+    if request.method == "POST":
+        if not assigned:
+            abort(403)
+        body = request.form["notes"].replace("\r\n", "\n")
+        body = body if body.strip() else ""
+        revision = note["revision"] if note else 0
+        if body != draft and request.form.get("revision", type=int) != revision:
+            db.rollback()
+            draft, conflict = body, True
+        else:
+            if body != draft:
+                db.execute("""INSERT INTO project_personal_notes(project_id,user_id,body,revision,updated_at)
+                              VALUES (?,?,?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET
+                              body=excluded.body, revision=excluded.revision, updated_at=excluded.updated_at""",
+                           (project_id, user["id"], body, revision + 1, now_str()))
+            db.commit()
+            return redirect(url_for("project_detail", project_id=project_id, _anchor="my-project-notes"), code=303)
     activities = db.execute("""SELECT a.*,u.name AS user_name FROM project_activities a LEFT JOIN users u ON u.id=a.user_id
         WHERE a.project_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 30""", (project_id,)).fetchall()
     all_users = db.execute("SELECT id,name,role FROM users ORDER BY name").fetchall()
-    return render_template("project_detail.html", project=project, members=members, tasks=tasks, activities=activities,
+    response = app.make_response(render_template("project_detail.html", project=project, members=members, tasks=tasks, activities=activities,
+        assigned=assigned, note=note, note_draft=draft, note_conflict=conflict,
         users=all_users, can_manage=can_manage_project(user, project), task_statuses=TASK_STATUSES,
-        priorities=PRIORITIES, completed_count=sum(1 for task in tasks if task["status"] == "Completed"))
+        priorities=PRIORITIES, completed_count=sum(1 for task in tasks if task["status"] == "Completed")))
+    response.cache_control.no_store = True
+    response.status_code = 409 if conflict else 200
+    return response
 
 
 @app.route("/projects/<int:project_id>/status", methods=["POST"])
@@ -2173,18 +2278,34 @@ def project_add_task(project_id):
     if assignee_id and not db.execute("SELECT id FROM users WHERE id=?", (assignee_id,)).fetchone():
         flash("Choose a valid task assignee.", "error")
         return redirect(url_for("project_detail", project_id=project_id))
+    save_project_task(db, project, user, title, assignee_id, priority,
+        request.form.get("description", "").strip(), None, request.form.get("due_date") or None,
+        request.form.get("estimated_hours", type=float))
+    flash("Task added.", "success")
+    return redirect(url_for("project_detail", project_id=project_id))
+
+
+def save_project_task(db, project, user, title, assignee_id, priority, description,
+                      start_date, due_date, hours, task_id=None):
     now = now_str()
-    db.execute("""INSERT INTO project_tasks
-        (project_id,title,description,assignee_id,due_date,priority,status,estimated_hours,created_by,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (project_id, title, request.form.get("description", "").strip(), assignee_id or None,
-        request.form.get("due_date") or None, priority, "To Do", request.form.get("estimated_hours", type=float), user["id"], now, now))
+    project_id = project["id"]
+    fields = (title, description, assignee_id or None, start_date, due_date, priority, hours, now)
+    if task_id is None:
+        db.execute("""INSERT INTO project_tasks
+            (title,description,assignee_id,start_date,due_date,priority,estimated_hours,updated_at,
+             project_id,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (*fields, project_id, user["id"], now))
+    else:
+        db.execute("""UPDATE project_tasks SET title=?,description=?,assignee_id=?,start_date=?,
+            due_date=?,priority=?,estimated_hours=?,updated_at=? WHERE id=? AND project_id=?""",
+            (*fields, task_id, project_id))
     if assignee_id:
         db.execute("INSERT OR IGNORE INTO project_members (project_id,user_id,added_at) VALUES (?,?,?)", (project_id, assignee_id, now))
     db.execute("UPDATE projects SET updated_at=? WHERE id=?", (now, project_id))
-    log_project_event(db, project_id, "Task assigned", title)
-    db.commit(); log_activity("Created task", "project", project_id, project["name"], title)
-    flash("Task added.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
+    event = "Updated task" if task_id is not None else "Created task"
+    log_project_event(db, project_id, "Task updated" if task_id is not None else "Task assigned", title)
+    db.commit()
+    log_activity(event, "project", project_id, project["name"], title)
 
 
 @app.route("/projects/<int:project_id>/tasks/<int:task_id>/status", methods=["POST"])
@@ -2204,6 +2325,9 @@ def project_update_task_status(project_id, task_id):
         db.execute("UPDATE projects SET updated_at=? WHERE id=?", (now, project_id))
         log_project_event(db, project_id, "Task status updated", f"{task['title']}: {task['status']} → {status}")
         db.commit(); log_activity("Updated task", "project", project_id, project["name"], f"{task['title']} → {status}")
+    if request.form.get("source") == "planner":
+        return redirect(url_for("team_planner", view=request.form.get("view", "list"),
+            project=request.form.get("project", ""), scope=request.form.get("scope", "all")))
     return redirect(url_for("project_detail", project_id=project_id))
 
 
@@ -2216,6 +2340,294 @@ def my_tasks():
         WHERE t.assignee_id=? AND t.status!='Completed'
         ORDER BY t.due_date IS NULL,t.due_date,CASE t.priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,t.id DESC""", (user["id"],)).fetchall()
     return render_template("my_tasks.html", tasks=tasks, task_statuses=TASK_STATUSES)
+
+
+# ---------- Team planning and private reminders ----------
+
+@app.get("/planner")
+@login_required
+def team_planner():
+    db, user = get_db(), current_user()
+    clause, params = visible_projects_clause(user, "p")
+    projects = db.execute(f"SELECT p.id,p.name,p.project_manager_id FROM projects p WHERE {clause} ORDER BY p.name", params).fetchall()
+    selected = request.args.get("project", type=int)
+    scope = "mine" if request.args.get("scope") == "mine" else "all"
+    view = "board" if request.args.get("view") == "board" else "list"
+    if selected:
+        clause += " AND p.id=?"
+        params.append(selected)
+    if scope == "mine":
+        clause += " AND t.assignee_id=?"
+        params.append(user["id"])
+    tasks = db.execute(f"""SELECT t.*,p.name AS project_name,p.project_manager_id,u.name AS assignee_name
+        FROM project_tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id
+        WHERE {clause} ORDER BY t.status='Completed',t.due_date IS NULL,t.due_date,t.id""", params).fetchall()
+    return render_template("planner.html", projects=projects, tasks=tasks, view=view, scope=scope,
+        selected=selected, statuses=TASK_STATUSES,
+        can_schedule=any(can_manage_project(user, p) for p in projects))
+
+
+@app.route("/planner/tasks/new", methods=["GET", "POST"])
+@app.route("/planner/tasks/<int:task_id>/edit", methods=["GET", "POST"])
+@login_required
+def schedule_task(task_id=None):
+    db, user = get_db(), current_user()
+    clause, params = visible_projects_clause(user, "p")
+    projects = [p for p in db.execute(f"SELECT p.* FROM projects p WHERE {clause} ORDER BY p.name", params)
+                if can_manage_project(user, p)]
+    task = None
+    if task_id is not None:
+        task = db.execute("SELECT * FROM project_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task or task["project_id"] not in {p["id"] for p in projects}:
+            abort(404)
+    if not projects:
+        abort(403)
+    selected = task["project_id"] if task else request.values.get("project", type=int)
+    values = request.form if request.method == "POST" else (dict(task) if task else {})
+    if request.method == "POST":
+        project = next((p for p in projects if p["id"] == selected), None)
+        title = values.get("title", "").strip()
+        raw_owner = values.get("assignee_id", "")
+        owner = request.form.get("assignee_id", type=int)
+        start, due = values.get("start_date", ""), values.get("due_date", "")
+        try:
+            if not project or not title or values.get("priority") not in PRIORITIES:
+                raise ValueError("Choose a project and priority, and enter a task name.")
+            if raw_owner and (not owner or not db.execute("SELECT 1 FROM users WHERE id=?", (owner,)).fetchone()):
+                raise ValueError("Choose an existing assignee.")
+            try:
+                start = date.fromisoformat(start).isoformat() if start else None
+                due = date.fromisoformat(due).isoformat() if due else None
+            except ValueError:
+                raise ValueError("Enter a valid start date and due date.")
+            if start and due and due < start:
+                raise ValueError("Choose a due date on or after the start date.")
+        except ValueError as error:
+            flash(str(error), "error")
+        else:
+            save_project_task(db, project, user, title, owner, values["priority"],
+                values.get("description", "").strip(), start, due, task["estimated_hours"] if task else None, task_id)
+            flash("Task schedule saved.", "success")
+            return redirect(url_for("team_planner", project=selected))
+    return render_template("schedule_task.html", projects=projects, selected=selected, values=values,
+        editing=task is not None, users=db.execute("SELECT id,name FROM users ORDER BY name").fetchall(), priorities=PRIORITIES), (422 if request.method == "POST" else 200)
+
+
+def reminder_day(value):
+    try:
+        day = date.fromisoformat(value or "")
+        if 1 < day.year < 9999:
+            return day
+    except ValueError:
+        pass
+    return date.fromisoformat(today_str())
+
+
+@app.get("/reminders")
+@login_required
+def reminders():
+    day = reminder_day(request.args.get("day"))
+    first = day.replace(day=1)
+    last = day.replace(day=calendar.monthrange(day.year, day.month)[1])
+    rows = get_db().execute("""SELECT * FROM personal_reminders WHERE user_id=?
+        AND remind_at>=? AND remind_at<? ORDER BY remind_at,id""",
+        (current_user()["id"], first.isoformat(), (last + timedelta(days=1)).isoformat())).fetchall()
+    by_day = {}
+    for row in rows:
+        by_day.setdefault(row["remind_at"][:10], []).append(row)
+    return render_template("reminders.html", day=day, weeks=calendar.Calendar().monthdayscalendar(day.year,day.month),
+        by_day=by_day, previous=first-timedelta(days=1), following=last+timedelta(days=1))
+
+
+@app.route("/reminders/new", methods=["GET", "POST"])
+@app.route("/reminders/<int:reminder_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_reminder(reminder_id=None):
+    db, uid = get_db(), current_user()["id"]
+    row = None
+    if reminder_id is not None:
+        row = db.execute("SELECT * FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid)).fetchone()
+        if not row:
+            abort(404)
+    day = reminder_day(request.args.get("day"))
+    when = row["remind_at"] if row else day.isoformat() + "T09:00"
+    title = row["title"] if row else ""
+    if request.method == "POST":
+        when, title = request.form.get("remind_at", ""), request.form.get("title", "").strip()
+        try:
+            parsed = datetime.strptime(when, "%Y-%m-%dT%H:%M")
+            valid = 1 < parsed.year < 9999 and bool(title)
+        except ValueError:
+            valid = False
+        if valid:
+            when = parsed.isoformat(timespec="minutes")
+            if row:
+                db.execute("UPDATE personal_reminders SET title=?,remind_at=? WHERE id=? AND user_id=?", (title, when, reminder_id, uid))
+            else:
+                db.execute("INSERT INTO personal_reminders(user_id,title,remind_at) VALUES(?,?,?)", (uid, title, when))
+            db.commit()
+            return redirect(url_for("reminders", day=when[:10]))
+        flash("Enter a reminder and a valid date and time.", "error")
+    return render_template("edit_reminder.html", title=title, when=when, editing=row is not None, day=day), (422 if request.method == "POST" else 200)
+
+
+@app.post("/reminders/<int:reminder_id>/update")
+@login_required
+def update_reminder(reminder_id):
+    db, uid = get_db(), current_user()["id"]
+    row = db.execute("SELECT remind_at FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid)).fetchone()
+    if not row:
+        abort(404)
+    action = request.form.get("action")
+    if action == "delete":
+        db.execute("DELETE FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid))
+    elif action in ("complete", "reopen"):
+        db.execute("UPDATE personal_reminders SET completed=? WHERE id=? AND user_id=?", (action == "complete", reminder_id, uid))
+    else:
+        abort(400)
+    db.commit()
+    return redirect(url_for("reminders", day=row["remind_at"][:10]))
+
+
+@app.get("/reminders/due")
+@login_required
+def due_reminders():
+    cutoff = datetime.now(APP_TIMEZONE).isoformat(timespec="minutes")[:16]
+    row = get_db().execute("""SELECT count(*) AS total,min(remind_at) AS earliest FROM personal_reminders
+        WHERE user_id=? AND completed=0 AND remind_at<=?""", (current_user()["id"], cutoff)).fetchone()
+    response = jsonify(count=row["total"], url=url_for("reminders", day=row["earliest"][:10]) if row["total"] else None)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+# ---------- Employee chat ----------
+
+CHAT_PAGE_SIZE = 50
+CHAT_ROLE_NAMES = {"manager": "Customer Relations Manager", "telecaller": "Telecaller",
+                   "field_sales": "Field Sales Executive"}
+
+
+def chat_employee(peer_id):
+    if peer_id == current_user()["id"]:
+        abort(404)
+    employee = get_db().execute("SELECT id,name,role,email FROM users WHERE id=?", (peer_id,)).fetchone()
+    if not employee:
+        abort(404)
+    return employee
+
+
+def chat_contacts(uid):
+    return get_db().execute("""SELECT u.id,u.name,u.role,substr(m.body,1,100) AS preview,m.sent_at,
+        m.sender_id AS last_sender,
+        (SELECT count(*) FROM chat_messages WHERE recipient_id=? AND sender_id=u.id AND is_read=0) AS unread
+        FROM users u LEFT JOIN chat_messages m ON m.id=max(
+            coalesce((SELECT max(id) FROM chat_messages WHERE sender_id=? AND recipient_id=u.id),0),
+            coalesce((SELECT max(id) FROM chat_messages WHERE sender_id=u.id AND recipient_id=?),0))
+        WHERE u.id<>? ORDER BY m.id DESC,u.name COLLATE NOCASE,u.id""", (uid, uid, uid, uid)).fetchall()
+
+
+def chat_history(uid, peer_id, *, after=None, before=None):
+    condition, params = "", [uid, peer_id, peer_id, uid]
+    if after is not None:
+        condition = " AND id>?"
+        params.append(after)
+    elif before is not None:
+        condition = " AND id<?"
+        params.append(before)
+    order = "ASC" if after is not None else "DESC"
+    rows = get_db().execute(f"""SELECT id,sender_id,body,sent_at FROM chat_messages
+        WHERE ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)){condition}
+        ORDER BY id {order} LIMIT ?""", (*params, CHAT_PAGE_SIZE + 1)).fetchall()
+    batch = rows[:CHAT_PAGE_SIZE]
+    return (batch if after is not None else batch[::-1]), len(rows) > CHAT_PAGE_SIZE
+
+
+@app.get("/chat")
+@app.get("/chat/<int:peer_id>")
+@login_required
+def chat(peer_id=None):
+    uid = current_user()["id"]
+    peer = chat_employee(peer_id) if peer_id is not None else None
+    contacts = chat_contacts(uid)
+    view = request.args.get("view")
+    directory = view == "people" or (view != "recent" and not any(p["sent_at"] for p in contacts))
+    messages, older = chat_history(uid, peer_id) if peer else ([], False)
+    token = session.setdefault("chat_csrf", uuid.uuid4().hex)
+    response = app.make_response(render_template("chat.html", peer=peer, contacts=contacts, directory=directory,
+        messages=messages, older=older, roles=CHAT_ROLE_NAMES, chat_token=token, client_id=uuid.uuid4().hex))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/chat/updates")
+@login_required
+def chat_updates():
+    uid = current_user()["id"]
+    peer_id = request.args.get("peer", type=int)
+    peer = chat_employee(peer_id) if peer_id is not None else None
+    before = request.args.get("before", type=int)
+    after = request.args.get("after", default=0, type=int)
+    rows, more = (chat_history(uid, peer_id, before=before, after=None if before is not None else after)
+                  if peer else ([], False))
+    payload = dict(messages=render_template("_chat_messages.html", messages=rows, peer=peer),
+                   first=rows[0]["id"] if rows else None, last=rows[-1]["id"] if rows else None, more=more)
+    if before is None:
+        payload["contacts"] = render_template("_chat_contacts.html", contacts=chat_contacts(uid), peer=peer,
+            directory=request.args.get("view") == "people", roles=CHAT_ROLE_NAMES)
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def check_chat_token():
+    expected = session.get("chat_csrf")
+    if not expected or not hmac.compare_digest(expected.encode(), request.form.get("token", "").encode()):
+        abort(403)
+
+
+@app.post("/chat/<int:peer_id>/send")
+@login_required
+def send_chat_message(peer_id):
+    check_chat_token()
+    chat_employee(peer_id)
+    uid = current_user()["id"]
+    body = request.form.get("body", "").strip()
+    client_id = request.form.get("client_id", "")
+    if not body or len(body) > 4000:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(error="Enter a message of up to 4,000 characters."), 400
+        flash("Enter a message of up to 4,000 characters.", "error")
+        return redirect(url_for("chat", peer_id=peer_id), code=303)
+    try:
+        client_id = uuid.UUID(client_id).hex
+    except ValueError:
+        abort(400)
+    db = get_db()
+    db.execute("""INSERT INTO chat_messages(sender_id,recipient_id,body,sent_at,client_id) VALUES(?,?,?,?,?)
+        ON CONFLICT(sender_id,client_id) DO NOTHING""", (uid, peer_id, body, now_str(), client_id))
+    saved = db.execute("SELECT recipient_id,body FROM chat_messages WHERE sender_id=? AND client_id=?", (uid,client_id)).fetchone()
+    if saved["recipient_id"] != peer_id or saved["body"] != body:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(next_client_id=uuid.uuid4().hex), 409
+        abort(409)
+    db.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(next_client_id=uuid.uuid4().hex)
+    return redirect(url_for("chat", peer_id=peer_id), code=303)
+
+
+@app.post("/chat/<int:peer_id>/read")
+@login_required
+def read_chat_messages(peer_id):
+    check_chat_token()
+    through = request.form.get("through", type=int)
+    if through is None:
+        abort(400)
+    db = get_db()
+    db.execute("""UPDATE chat_messages SET is_read=1
+        WHERE recipient_id=? AND sender_id=? AND id<=? AND is_read=0""", (current_user()["id"],peer_id,through))
+    db.commit()
+    return "", 204
 
 
 # ---------- Companies (the center of everything) ----------
@@ -3084,6 +3496,435 @@ def company_settings():
             f.get('default_terms','').strip(),f.get('default_notes','').strip(),f.get('invoice_prefix','').strip().upper() or 'QL')); db.commit()
         flash('Company invoice settings saved.','success'); return redirect(url_for('company_settings'))
     return render_template('company_settings.html', settings=_invoice_settings(db))
+
+
+# ---------- Team tasks (status-grouped list with assignees, tags, subtasks and activity) ----------
+
+WORK_STATUSES = ["To Do", "Planning", "In Progress", "At Risk", "Update Required", "On Hold", "Complete"]
+WORK_PRIORITIES = ["Urgent", "High", "Normal", "Low"]
+
+
+def _init_work_tasks(db):
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'To Do',
+            priority TEXT,
+            start_date TEXT,
+            due_date TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY (parent_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_assignees (
+            task_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (task_id, user_id),
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_tags (
+            task_id INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            PRIMARY KEY (task_id, tag),
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            user_id INTEGER,
+            kind TEXT NOT NULL DEFAULT 'activity',
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_status ON work_tasks(status, parent_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_work_task_events_task ON work_task_events(task_id, id)")
+
+
+def _task_token():
+    return session.setdefault("tasks_csrf", uuid.uuid4().hex)
+
+
+def _check_task_token():
+    expected = session.get("tasks_csrf")
+    if not expected or not hmac.compare_digest(request.form.get("token", ""), expected):
+        abort(400)
+
+
+def _tasks_back(default):
+    """Return the caller's /tasks URL when it supplied one, so filters survive a save."""
+    target = request.form.get("next", "")
+    return target if target.startswith("/tasks") and not target.startswith("//") else default
+
+
+def _log_task_event(db, task_id, body, kind="activity"):
+    db.execute(
+        "INSERT INTO work_task_events (task_id,user_id,kind,body,created_at) VALUES (?,?,?,?,?)",
+        (task_id, current_user()["id"], kind, body, now_str()),
+    )
+
+
+def _initials(name):
+    parts = (name or "?").split()
+    return (parts[0][:1] + (parts[-1][:1] if len(parts) > 1 else "")).upper()
+
+
+def _due_view(value, done=False):
+    """Short label for a due date, and whether it is overdue."""
+    if not value:
+        return None
+    try:
+        due = date.fromisoformat(value)
+    except ValueError:
+        return {"label": value, "overdue": False}
+    today = datetime.now(APP_TIMEZONE).date()
+    delta = (due - today).days
+    if delta == 0:
+        label = "Today"
+    elif delta == 1:
+        label = "Tomorrow"
+    elif delta == -1:
+        label = "Yesterday"
+    elif -7 <= delta < 0:
+        label = f"{-delta} days ago"
+    elif due.year == today.year:
+        label = f"{due.day} {due.strftime('%b')}"
+    else:
+        label = f"{due.day} {due.strftime('%b %Y')}"
+    return {"label": label, "overdue": delta < 0 and not done}
+
+
+def _task_views(db, rows):
+    """Turn work_tasks rows into dicts carrying assignees, tags and display values."""
+    ids = [row["id"] for row in rows]
+    people, tags = {}, {}
+    if ids:
+        marks = ",".join("?" * len(ids))
+        for r in db.execute(
+            f"""SELECT a.task_id, u.id, u.name FROM work_task_assignees a
+                JOIN users u ON u.id = a.user_id WHERE a.task_id IN ({marks}) ORDER BY u.name""", ids):
+            people.setdefault(r["task_id"], []).append(
+                {"id": r["id"], "name": r["name"], "initials": _initials(r["name"]), "tone": r["id"] % 5})
+        for r in db.execute(f"SELECT task_id, tag FROM work_task_tags WHERE task_id IN ({marks}) ORDER BY tag", ids):
+            tags.setdefault(r["task_id"], []).append({"name": r["tag"], "tone": sum(map(ord, r["tag"])) % 6})
+    views = []
+    for row in rows:
+        item = dict(row)
+        item["assignees"] = people.get(row["id"], [])
+        item["tags"] = tags.get(row["id"], [])
+        item["due"] = _due_view(row["due_date"], row["status"] == "Complete")
+        item["subtasks"] = []
+        views.append(item)
+    return views
+
+
+def _get_work_task(db, task_id):
+    row = db.execute("SELECT * FROM work_tasks WHERE id=?", (task_id,)).fetchone()
+    if not row:
+        abort(404)
+    return row
+
+
+def _set_task_status(db, task, status):
+    if status == task["status"]:
+        return
+    now = now_str()
+    db.execute("UPDATE work_tasks SET status=?, updated_at=?, completed_at=? WHERE id=?",
+               (status, now, now if status == "Complete" else None, task["id"]))
+    _log_task_event(db, task["id"], f"changed status from {task['status']} to {status}")
+
+
+def _task_scope(db, user):
+    """Tasks after the assignee and closed filters, shared by the list, board and calendar."""
+    views = _task_views(db, db.execute("SELECT * FROM work_tasks ORDER BY id").fetchall())
+    by_id = {item["id"]: item for item in views}
+    top = []
+    for item in views:
+        parent = by_id.get(item["parent_id"])
+        (parent["subtasks"] if parent else top).append(item)
+
+    assignee = request.args.get("assignee", "")
+    assignee_id = user["id"] if assignee == "me" else (int(assignee) if assignee.isdigit() else None)
+
+    def involves(item):
+        return not assignee_id or any(p["id"] == assignee_id for p in item["assignees"])
+
+    show_closed = request.args.get("closed", "1") != "0"
+    return {
+        "top": [item for item in top if involves(item) or any(involves(sub) for sub in item["subtasks"])],
+        "all": [item for item in views if involves(item)],
+        "assignee": assignee,
+        "show_closed": show_closed,
+        "users": db.execute("SELECT id, name FROM users ORDER BY name").fetchall(),
+    }
+
+
+def _tasks_page(template, scope, **extra):
+    return render_template(
+        template, users=scope["users"], assignee=scope["assignee"], show_closed=scope["show_closed"],
+        token=_task_token(), statuses=WORK_STATUSES, priorities=WORK_PRIORITIES,
+        here=request.full_path.rstrip("?"), **extra,
+    )
+
+
+@app.get("/tasks")
+@login_required
+def tasks_list():
+    scope = _task_scope(get_db(), current_user())
+    groups = []
+    for status in reversed(WORK_STATUSES):
+        if status == "Complete" and not scope["show_closed"]:
+            continue
+        items = [item for item in scope["top"] if item["status"] == status]
+        if items or status == "To Do":
+            groups.append({"status": status, "tasks": items})
+    return _tasks_page("tasks.html", scope, view="list", month=None, groups=groups,
+                       total=sum(len(g["tasks"]) for g in groups))
+
+
+@app.get("/tasks/board")
+@login_required
+def tasks_board():
+    scope = _task_scope(get_db(), current_user())
+    columns = [
+        {"status": status, "tasks": [item for item in scope["top"] if item["status"] == status]}
+        for status in WORK_STATUSES
+        if status != "Complete" or scope["show_closed"]
+    ]
+    return _tasks_page("tasks_board.html", scope, view="board", month=None, columns=columns,
+                       total=sum(len(c["tasks"]) for c in columns))
+
+
+@app.get("/tasks/calendar")
+@login_required
+def tasks_calendar():
+    scope = _task_scope(get_db(), current_user())
+    today = datetime.now(APP_TIMEZONE).date()
+    try:
+        year, month_no = map(int, request.args.get("month", "").split("-"))
+        first = date(year, month_no, 1)
+    except ValueError:
+        first = today.replace(day=1)
+    visible = [item for item in scope["all"] if scope["show_closed"] or item["status"] != "Complete"]
+    by_day = {}
+    for item in visible:
+        if item["due_date"]:
+            by_day.setdefault(item["due_date"], []).append(item)
+    weeks = [
+        [{
+            "iso": day.isoformat(), "day": day.day, "label": f"{day.strftime('%A')} {day.day} {day.strftime('%B')}",
+            "in_month": day.month == first.month, "is_today": day == today,
+            "tasks": by_day.get(day.isoformat(), []),
+        } for day in week]
+        for week in calendar.Calendar(firstweekday=6).monthdatescalendar(first.year, first.month)
+    ]
+    previous = (first - timedelta(days=1)).replace(day=1)
+    following = (first + timedelta(days=32)).replace(day=1)
+    open_items = [item for item in scope["all"] if item["status"] != "Complete"]
+    return _tasks_page(
+        "tasks_calendar.html", scope, view="calendar", month=first.strftime("%Y-%m"),
+        weeks=weeks, month_label=first.strftime("%B %Y"),
+        prev_month=previous.strftime("%Y-%m"), next_month=following.strftime("%Y-%m"),
+        this_month=today.strftime("%Y-%m"),
+        overdue=sorted((i for i in open_items if i["due_date"] and i["due_date"] < today.isoformat()), key=lambda i: i["due_date"]),
+        unscheduled=[i for i in open_items if not i["due_date"]],
+        total=sum(len(cell["tasks"]) for week in weeks for cell in week if cell["in_month"]),
+    )
+
+
+@app.post("/tasks/new")
+@login_required
+def task_create():
+    _check_task_token()
+    db, user = get_db(), current_user()
+    title = request.form.get("title", "").strip()
+    status = request.form.get("status", "To Do")
+    parent_id = request.form.get("parent_id", type=int)
+    if parent_id:
+        parent = _get_work_task(db, parent_id)
+        if parent["parent_id"]:
+            abort(400)  # one level of subtasks only
+    default = url_for("task_detail", task_id=parent_id) if parent_id else url_for("tasks_list")
+    if not title or len(title) > 200 or status not in WORK_STATUSES:
+        flash("Enter a task name of up to 200 characters.", "error")
+        return redirect(_tasks_back(default))
+    due = request.form.get("due_date") or None
+    try:
+        due = date.fromisoformat(due).isoformat() if due else None
+    except ValueError:
+        flash("Enter a valid due date.", "error")
+        return redirect(_tasks_back(default))
+    now = now_str()
+    cur = db.execute(
+        "INSERT INTO work_tasks (parent_id,title,status,due_date,created_by,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?)",
+        (parent_id, title, status, due, user["id"], now, now, now if status == "Complete" else None),
+    )
+    _log_task_event(db, cur.lastrowid, "created this task")
+    if parent_id:
+        _log_task_event(db, parent_id, f"added subtask {title}")
+    db.commit()
+    log_activity("Created task", "task", cur.lastrowid, title)
+    return redirect(_tasks_back(default))
+
+
+@app.get("/tasks/<int:task_id>")
+@login_required
+def task_detail(task_id):
+    db, user = get_db(), current_user()
+    task = _task_views(db, [_get_work_task(db, task_id)])[0]
+    parent = db.execute("SELECT id, title FROM work_tasks WHERE id=?", (task["parent_id"],)).fetchone() if task["parent_id"] else None
+    task["subtasks"] = _task_views(db, db.execute("SELECT * FROM work_tasks WHERE parent_id=? ORDER BY id", (task_id,)).fetchall())
+    days = []
+    for row in db.execute(
+        """SELECT e.*, u.name AS user_name FROM work_task_events e
+           LEFT JOIN users u ON u.id = e.user_id WHERE e.task_id=? ORDER BY e.id""", (task_id,)):
+        stamp = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+        label = f"{stamp.strftime('%A')}, {stamp.day} {stamp.strftime('%B')}"
+        if not days or days[-1]["label"] != label:
+            days.append({"label": label, "events": []})
+        days[-1]["events"].append({
+            "kind": row["kind"], "body": row["body"], "user": row["user_name"] or "Former user",
+            "initials": _initials(row["user_name"]), "tone": (row["user_id"] or 0) % 5,
+            "time": stamp.strftime("%I:%M %p").lstrip("0"),
+        })
+    created = datetime.strptime(task["created_at"], "%Y-%m-%d %H:%M:%S")
+    return render_template(
+        "task_detail.html", task=task, parent=parent, days=days,
+        created_label=f"{created.day} {created.strftime('%b %Y')}",
+        users=db.execute("SELECT id, name FROM users ORDER BY name").fetchall(),
+        statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(),
+        can_delete=user["role"] == "manager" or task["created_by"] == user["id"],
+    )
+
+
+@app.post("/tasks/<int:task_id>/update")
+@login_required
+def task_update(task_id):
+    _check_task_token()
+    db = get_db()
+    task = _get_work_task(db, task_id)
+    here = redirect(url_for("task_detail", task_id=task_id))
+    form = request.form
+    title = form.get("title", "").strip()
+    status = form.get("status", task["status"])
+    priority = form.get("priority", "") or None
+    try:
+        if not title or len(title) > 200:
+            raise ValueError("Enter a task name of up to 200 characters.")
+        if status not in WORK_STATUSES or (priority and priority not in WORK_PRIORITIES):
+            raise ValueError("Choose a valid status and priority.")
+        try:
+            start = date.fromisoformat(form["start_date"]).isoformat() if form.get("start_date") else None
+            due = date.fromisoformat(form["due_date"]).isoformat() if form.get("due_date") else None
+        except ValueError:
+            raise ValueError("Enter a valid start date and due date.")
+        if start and due and due < start:
+            raise ValueError("Choose a due date on or after the start date.")
+    except ValueError as error:
+        flash(str(error), "error")
+        return here
+
+    description = form.get("description", "").strip()[:20000]
+    names = {u["id"]: u["name"] for u in db.execute("SELECT id, name FROM users")}
+    wanted = {uid for uid in form.getlist("assignees", type=int) if uid in names}
+    current = {r["user_id"] for r in db.execute("SELECT user_id FROM work_task_assignees WHERE task_id=?", (task_id,))}
+    new_tags = []
+    for raw in form.get("tags", "").split(","):
+        tag = " ".join(raw.split()).lower()[:40]
+        if tag and tag not in new_tags:
+            new_tags.append(tag)
+    new_tags = new_tags[:12]
+    old_tags = [r["tag"] for r in db.execute("SELECT tag FROM work_task_tags WHERE task_id=?", (task_id,))]
+
+    if title != task["title"]:
+        _log_task_event(db, task_id, f"renamed this task to {title}")
+    if description != (task["description"] or ""):
+        _log_task_event(db, task_id, "updated the description")
+    if priority != task["priority"]:
+        _log_task_event(db, task_id, f"set priority to {priority}" if priority else "cleared the priority")
+    if start != task["start_date"]:
+        _log_task_event(db, task_id, f"set start date to {start}" if start else "cleared the start date")
+    if due != task["due_date"]:
+        _log_task_event(db, task_id, f"set due date to {due}" if due else "cleared the due date")
+    for uid in sorted(wanted - current):
+        db.execute("INSERT INTO work_task_assignees (task_id,user_id) VALUES (?,?)", (task_id, uid))
+        _log_task_event(db, task_id, f"assigned this task to {names[uid]}")
+    for uid in sorted(current - wanted):
+        db.execute("DELETE FROM work_task_assignees WHERE task_id=? AND user_id=?", (task_id, uid))
+        _log_task_event(db, task_id, f"unassigned {names.get(uid, 'a former user')}")
+    for tag in new_tags:
+        if tag not in old_tags:
+            db.execute("INSERT INTO work_task_tags (task_id,tag) VALUES (?,?)", (task_id, tag))
+            _log_task_event(db, task_id, f"added tag {tag}")
+    for tag in old_tags:
+        if tag not in new_tags:
+            db.execute("DELETE FROM work_task_tags WHERE task_id=? AND tag=?", (task_id, tag))
+            _log_task_event(db, task_id, f"removed tag {tag}")
+    db.execute(
+        "UPDATE work_tasks SET title=?, description=?, priority=?, start_date=?, due_date=?, updated_at=? WHERE id=?",
+        (title, description, priority, start, due, now_str(), task_id),
+    )
+    _set_task_status(db, task, status)
+    db.commit()
+    return here
+
+
+@app.post("/tasks/<int:task_id>/status")
+@login_required
+def task_set_status(task_id):
+    _check_task_token()
+    db = get_db()
+    task = _get_work_task(db, task_id)
+    status = request.form.get("status")
+    if status not in WORK_STATUSES:
+        abort(400)
+    _set_task_status(db, task, status)
+    db.commit()
+    return redirect(_tasks_back(url_for("tasks_list")))
+
+
+@app.post("/tasks/<int:task_id>/comment")
+@login_required
+def task_comment(task_id):
+    _check_task_token()
+    db = get_db()
+    _get_work_task(db, task_id)
+    body = request.form.get("body", "").strip()[:5000]
+    if body:
+        _log_task_event(db, task_id, body, kind="comment")
+        db.commit()
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.post("/tasks/<int:task_id>/delete")
+@login_required
+def task_delete(task_id):
+    _check_task_token()
+    db, user = get_db(), current_user()
+    task = _get_work_task(db, task_id)
+    if user["role"] != "manager" and task["created_by"] != user["id"]:
+        flash("Only a manager or the person who created a task can delete it.", "error")
+        return redirect(url_for("task_detail", task_id=task_id))
+    db.execute("DELETE FROM work_tasks WHERE id=?", (task_id,))
+    db.commit()
+    log_activity("Deleted task", "task", task_id, task["title"])
+    flash("Task deleted.", "success")
+    return redirect(url_for("task_detail", task_id=task["parent_id"]) if task["parent_id"] else url_for("tasks_list"))
 
 
 @app.context_processor

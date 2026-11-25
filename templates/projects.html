@@ -13,6 +13,43 @@
   <div class="stat-card"><div class="stat-value">{{ summary.completed }}</div><div class="stat-label">Completed projects</div></div>
 </div>
 
+<turbo-frame id="project-views" target="_top">
+<nav class="view-switch project-view-switch" aria-label="Project view">
+  {% for key, label in [('cards', 'Cards'), ('details', 'Details')] %}
+  <a href="{{ url_for('projects_list', view=key) }}" data-turbo-frame="project-views" data-turbo-action="advance"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if not projects %}
+<div class="empty-state project-empty">No projects are assigned to you yet.{% if current_user.role == 'manager' %} Create one from a won lead or start an independent internal project.{% endif %}</div>
+{% elif view == 'details' %}
+<div class="table-card project-details-table" role="region" aria-label="Project details" tabindex="0">
+  <table aria-label="Projects">
+    <thead><tr>
+      {% for heading in ['Project / company', 'Owner', 'Status', 'Priority', 'Start date', 'Target date', 'Budget', 'Tasks done'] %}
+      <th scope="col">{{ heading }}</th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for project in projects %}
+      <tr>
+        <th scope="row">
+          <a href="{{ url_for('project_detail', project_id=project.id) }}">{{ project.name }}</a>
+          <small>{{ project.company_name or 'Independent internal project' }}</small>
+        </th>
+        <td>{{ project.project_manager_name or 'Unassigned' }}</td>
+        <td><span class="project-status status-{{ project.status|slug }}">{{ project.status }}</span></td>
+        <td><span class="priority priority-{{ project.priority|lower }}">{{ project.priority }}</span></td>
+        <td>{{ project.start_date or '—' }}</td>
+        <td>{{ project.target_date or '—' }}</td>
+        <td>{{ '₹{:,.0f}'.format(project.budget) if project.budget is not none else '—' }}</td>
+        <td>{{ project.completed_task_count or 0 }} / {{ project.task_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
 <div class="project-grid">
 {% for project in projects %}
   <a class="project-card" href="{{ url_for('project_detail', project_id=project.id) }}">
@@ -21,10 +58,10 @@
     <p class="project-client">{{ project.company_name or 'Independent internal project' }}</p>
     <div class="project-progress"><span style="width: {{ ((project.completed_task_count or 0) / project.task_count * 100) if project.task_count else 0 }}%"></span></div>
     <div class="project-card-meta"><span>{{ project.completed_task_count or 0 }}/{{ project.task_count }} tasks</span><span>{{ project.target_date or 'No target date' }}</span></div>
-    <div class="project-owner">Assigned to · {{ project.project_manager_name or 'Unassigned' }}</div>
+    <div class="project-owner"><span>Assigned to · {{ project.project_manager_name or 'Unassigned' }}</span><span class="project-open">View details <span aria-hidden="true">→</span></span></div>
   </a>
-{% else %}
-  <div class="empty-state project-empty">No projects are assigned to you yet.{% if current_user.role == 'manager' %} Create one from a won lead or start an independent internal project.{% endif %}</div>
 {% endfor %}
 </div>
+{% endif %}
+</turbo-frame>
 {% endblock %}

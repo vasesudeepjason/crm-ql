@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit reminder' if editing else 'Add reminder' }} · Lead Desk{% endblock %}
+{% block content %}
+<header class="page-header"><div><h1 class="page-title">{{ 'Edit reminder' if editing else 'Add reminder' }}</h1></div></header>
+<form class="form-card planning-form" method="post">
+  <div class="form-group"><label for="title">Reminder</label><input id="title" name="title" placeholder="What do you want to remember?" required value="{{ title }}"></div>
+  <div class="form-group"><label for="remind-at">Date and time (IST)</label><input id="remind-at" name="remind_at" type="datetime-local" value="{{ when }}" required></div>
+  <p class="page-sub">Only you can see this reminder. Due reminders appear while the CRM is open.</p>
+  <div class="planning-actions"><button class="btn btn-primary">Save reminder</button><a href="{{ url_for('reminders',day=day.isoformat()) }}">Cancel</a></div>
+</form>
+{% endblock %}

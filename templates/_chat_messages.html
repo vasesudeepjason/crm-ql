@@ -1,0 +1,9 @@
+{% for message in messages %}
+  {% set mine = message.sender_id == current_user.id %}
+  <article class="chat-message{% if mine %} is-mine{% endif %}" data-message="{{ message.id }}">
+    <span class="chat-avatar" aria-hidden="true">{{ (current_user.name if mine else peer.name)[:1]|upper }}</span>
+    <div><header><strong>{{ 'You' if mine else peer.name }}</strong>
+      <time datetime="{{ message.sent_at|replace(' ','T') }}+05:30" title="{{ message.sent_at }} IST">{{ message.sent_at[:10] }} · {{ message.sent_at[11:16] }}</time>
+    </header><p>{{ message.body }}</p></div>
+  </article>
+{% endfor %}

@@ -15,12 +15,12 @@
       <form method="post" action="{{ url_for('add_company') }}">
         <div class="form-group">
           <label>Company name *</label>
-          <input type="text" name="name" required>
+          <input type="text" name="name" placeholder="Company name" required>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label>Industry</label>
-            <input type="text" name="industry">
+            <input type="text" name="industry" placeholder="e.g. Manufacturing">
           </div>
           <div class="form-group">
             <label>Status</label>
@@ -40,15 +40,15 @@
         <div class="form-row">
           <div class="form-group">
             <label>Company Email</label>
-            <input type="email" name="email">
+            <input type="email" name="email" placeholder="name@company.com">
           </div>
           <div class="form-group">
             <label>Company Phone</label>
-            <input type="text" name="phone">
+            <input type="text" name="phone" placeholder="Phone number">
           </div>
           <div class="form-group">
             <label>Alternate Phone</label>
-            <input type="text" name="alternate_phone">
+            <input type="text" name="alternate_phone" placeholder="Second phone number">
           </div>
         </div>
         <div class="form-group">
@@ -56,19 +56,19 @@
           <textarea name="address" placeholder="Street address"></textarea>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>City</label><input type="text" name="city"></div>
-          <div class="form-group"><label>State</label><input type="text" name="state"></div>
-          <div class="form-group"><label>Pincode</label><input type="text" name="pincode"></div>
+          <div class="form-group"><label>City</label><input type="text" name="city" placeholder="City or town"></div>
+          <div class="form-group"><label>State</label><input type="text" name="state" placeholder="State or territory"></div>
+          <div class="form-group"><label>Pincode</label><input type="text" name="pincode" placeholder="Postal code"></div>
         </div>
-        <div class="form-group"><label>Country</label><input type="text" name="country" value="India"></div>
+        <div class="form-group"><label>Country</label><input type="text" name="country" placeholder="Country name" value="India"></div>
         <div class="form-group">
           <label>Billing address</label>
           <textarea name="billing_address" placeholder="Address used on invoices"></textarea>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>GSTIN</label><input type="text" name="gstin"></div>
-          <div class="form-group"><label>PAN</label><input type="text" name="pan"></div>
-          <div class="form-group"><label>CIN</label><input type="text" name="cin"></div>
+          <div class="form-group"><label>GSTIN</label><input type="text" name="gstin" placeholder="15-character GSTIN"></div>
+          <div class="form-group"><label>PAN</label><input type="text" name="pan" placeholder="10-character PAN"></div>
+          <div class="form-group"><label>CIN</label><input type="text" name="cin" placeholder="Corporate identification number"></div>
         </div>
         {% if users %}
         <div class="form-group">
@@ -80,7 +80,7 @@
         {% endif %}
         <div class="form-group">
           <label>Notes</label>
-          <textarea name="notes"></textarea>
+          <textarea name="notes" placeholder="Add a note"></textarea>
         </div>
         <button type="submit" class="btn btn-accent">Add company</button>
       </form>
@@ -101,8 +101,8 @@
         </thead>
         <tbody>
           {% for c in companies %}
-          <tr onclick="window.location='{{ url_for('company_detail', company_id=c.id) }}'" style="cursor:pointer">
-            <td>{{ c.name }}</td>
+          <tr class="clickable-row">
+            <td><a class="row-link" href="{{ url_for('company_detail', company_id=c.id) }}">{{ c.name }}</a></td>
             <td>{{ c.industry or '—' }}</td>
             <td><span class="owner-badge">{{ c.status or 'Prospect' }}</span></td>
             <td>{{ c.contact_count }}</td>

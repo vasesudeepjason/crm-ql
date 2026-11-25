@@ -1,0 +1,73 @@
+{% extends "tasks_base.html" %}
+{% import "_task_bits.html" as bits %}
+
+{% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} due in {{ month_label }}.{% endblock %}
+
+{% block tasks_toolbar %}
+{% set closed_q = None if show_closed else 0 %}
+<a class="tk-chip" href="{{ url_for('tasks_calendar', month=this_month, assignee=assignee or None, closed=closed_q) }}">Today</a>
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=prev_month, assignee=assignee or None, closed=closed_q) }}" aria-label="Previous month">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.500 5.500 8 10 12.500"/></svg>
+</a>
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_calendar', month=next_month, assignee=assignee or None, closed=closed_q) }}" aria-label="Next month">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.500 10.500 8 6 12.500"/></svg>
+</a>
+<h2 class="tk-cal-month">{{ month_label }}</h2>
+{% endblock %}
+
+{% macro side_list(title, items, empty, alert=false) %}
+<details class="tk-cal-panel"{% if items %} open{% endif %}>
+  <summary>
+    <svg class="tk-caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.500 6 8 10.500 12.500 6Z" fill="currentColor"/></svg>
+    <span>{{ title }}</span>
+    <span class="tk-cal-count{% if alert and items %} is-alert{% endif %}">{{ items|length }}</span>
+  </summary>
+  {% if items %}
+  <ul>
+    {% for task in items %}
+    <li>
+      <a class="tk-cal-side-task tk-st-{{ task.status|slug }}" href="{{ url_for('task_detail', task_id=task.id) }}" data-turbo-frame="task-panel" data-task-open
+         data-search-item data-search="{{ task.title|lower }} {{ task.tags|map(attribute='name')|join(' ') }}">
+        <span>{{ task.title }}</span>
+        {% if task.due %}<small class="tk-due-label{% if task.due.overdue %} is-overdue{% endif %}">{{ task.due.label }}</small>{% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p>{{ empty }}</p>{% endif %}
+</details>
+{% endmacro %}
+
+{% block tasks_body %}
+<div class="tk-cal-wrap">
+  <div class="tk-cal" role="region" aria-label="Tasks due in {{ month_label }}">
+    <div class="tk-cal-head" aria-hidden="true">
+      {% for name in ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] %}<span>{{ name }}</span>{% endfor %}
+    </div>
+    <div class="tk-cal-grid">
+      {% for week in weeks %}{% for cell in week %}
+      <div class="tk-cal-day{% if not cell.in_month %} is-out{% endif %}{% if cell.is_today %} is-today{% endif %}{% if not cell.tasks %} is-empty{% endif %}">
+        <div class="tk-cal-date">
+          <button type="button" class="tk-cal-add" data-new-task data-due="{{ cell.iso }}" aria-label="Add task due {{ cell.label }}" title="Add task due {{ cell.label }}">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="M8 3.500v9M3.500 8h9"/></svg>
+          </button>
+          <span class="tk-cal-full">{{ cell.label }}</span>
+          <span class="tk-cal-num"{% if cell.is_today %} aria-label="Today, {{ cell.label }}"{% endif %}>{{ cell.day }}</span>
+        </div>
+        {% for task in cell.tasks %}
+        <a class="tk-cal-task tk-st-{{ task.status|slug }}{% if task.status == 'Complete' %} is-done{% endif %}"
+           href="{{ url_for('task_detail', task_id=task.id) }}" data-turbo-frame="task-panel" data-task-open
+           data-search-item data-search="{{ task.title|lower }} {{ task.tags|map(attribute='name')|join(' ') }} {{ task.assignees|map(attribute='name')|join(' ')|lower }}"
+           title="{{ task.title }} · {{ task.status }}">{{ task.title }}</a>
+        {% endfor %}
+      </div>
+      {% endfor %}{% endfor %}
+    </div>
+  </div>
+
+  <aside class="tk-cal-side" aria-label="Tasks outside the calendar">
+    {{ side_list('Overdue', overdue, 'Nothing is overdue.', true) }}
+    {{ side_list('Unscheduled', unscheduled, 'Every open task has a due date.') }}
+  </aside>
+</div>
+{% endblock %}

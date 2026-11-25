@@ -10,18 +10,40 @@
       <div class="project-info-grid"><div><span>Start date</span><strong>{{ project.start_date or '—' }}</strong></div><div><span>Target date</span><strong>{{ project.target_date or '—' }}</strong></div><div><span>Budget</span><strong>{{ '₹{:,.0f}'.format(project.budget) if project.budget is not none else '—' }}</strong></div><div><span>Progress</span><strong>{{ completed_count }}/{{ tasks|length }} tasks</strong></div></div>
       {% if project.lead_id %}<a class="project-linked-record" href="{{ url_for('lead_detail', lead_id=project.lead_id) }}">CRM lead · {{ project.lead_name }}</a>{% endif %}
     </div>
+    {% if assigned %}
+    <turbo-frame id="my-project-notes">
+      <form class="card project-notes" method="post" action="{{ url_for('project_detail', project_id=project.id) }}">
+        <h2 class="section-title"><label for="personal-notes">My project notes</label></h2>
+        <p id="notes-privacy" class="page-sub">Only you can see these notes.</p>
+        <input type="hidden" name="token" value="{{ session.project_note_token }}">
+        <input type="hidden" name="revision" value="{{ note.revision if note else 0 }}">
+        {% if note_conflict %}
+        <div class="flash flash-error" role="alert">Your notes changed in another tab. Compare the saved version with your draft before saving again.</div>
+        <details open><summary>Saved version</summary><p class="saved-note">{{ note.body if note and note.body else 'Empty' }}</p></details>
+        {% endif %}
+        <div class="form-group">
+          <textarea id="personal-notes" name="notes" rows="4" aria-describedby="notes-privacy" placeholder="Write a thought or add a pointer on a new line.">
+{{ note_draft }}</textarea>
+        </div>
+        <div class="project-note-actions">
+          <button class="btn btn-primary btn-sm" type="submit">Save notes</button>
+          {% if note %}<small role="status">Last saved {{ note.updated_at }}</small>{% endif %}
+        </div>
+      </form>
+    </turbo-frame>
+    {% endif %}
     <h2 class="section-title">Tasks</h2>
     <div class="task-list">
       {% for task in tasks %}
       <article class="task-row"><div class="task-main"><div class="task-title">{{ task.title }}</div>{% if task.description %}<div class="task-description">{{ task.description }}</div>{% endif %}<div class="task-meta"><span class="priority priority-{{ task.priority|lower }}">{{ task.priority }}</span><span>Assigned to · {{ task.assignee_name or 'Unassigned' }}</span>{% if task.due_date %}<span>Due · {{ task.due_date }}</span>{% endif %}</div></div>
-        <div class="task-actions">{% if can_manage or task.assignee_id == current_user.id %}<form method="post" action="{{ url_for('project_update_task_status', project_id=project.id, task_id=task.id) }}"><select name="status" onchange="this.form.submit()">{% for status in task_statuses %}<option {% if task.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></form>{% else %}<span class="project-status status-{{ task.status|slug }}">{{ task.status }}</span>{% endif %}</div>
+        <div class="task-actions">{% if can_manage or task.assignee_id == current_user.id %}<form method="post" action="{{ url_for('project_update_task_status', project_id=project.id, task_id=task.id) }}"><select name="status" aria-label="Status for {{ task.title }}" onchange="this.form.requestSubmit()">{% for status in task_statuses %}<option {% if task.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></form>{% else %}<span class="project-status status-{{ task.status|slug }}">{{ task.status }}</span>{% endif %}</div>
       </article>
       {% else %}<div class="empty-state">No tasks yet. Add the first deliverable below.</div>{% endfor %}
     </div>
-    {% if can_manage %}<form method="post" action="{{ url_for('project_add_task', project_id=project.id) }}" class="card task-create-form"><h2 class="section-title">Add task</h2><div class="form-grid"><div class="form-group"><label>Task *</label><input name="title" required placeholder="e.g. Share first design concept"></div><div class="form-group"><label>Assigned to</label><select name="assignee_id"><option value="">Unassigned</option>{% for person in users %}<option value="{{ person.id }}">{{ person.name }}</option>{% endfor %}</select></div><div class="form-group"><label>Due date</label><input type="date" name="due_date"></div><div class="form-group"><label>Priority</label><select name="priority">{% for priority in priorities %}<option {% if priority == 'Medium' %}selected{% endif %}>{{ priority }}</option>{% endfor %}</select></div><div class="form-group"><label>Estimated hours</label><input type="number" min="0" step="0.5" name="estimated_hours"></div></div><div class="form-group"><label>Details</label><textarea name="description" rows="2" placeholder="Acceptance criteria or useful context"></textarea></div><button class="btn btn-accent">Assign task</button></form>{% endif %}
+    {% if can_manage %}<form method="post" action="{{ url_for('project_add_task', project_id=project.id) }}" class="card task-create-form"><h2 class="section-title">Add task</h2><div class="form-grid"><div class="form-group"><label>Task *</label><input name="title" required placeholder="e.g. Share first design concept"></div><div class="form-group"><label>Assigned to</label><select name="assignee_id"><option value="">Unassigned</option>{% for person in users %}<option value="{{ person.id }}">{{ person.name }}</option>{% endfor %}</select></div><div class="form-group"><label>Due date</label><input type="date" name="due_date"></div><div class="form-group"><label>Priority</label><select name="priority">{% for priority in priorities %}<option {% if priority == 'Medium' %}selected{% endif %}>{{ priority }}</option>{% endfor %}</select></div><div class="form-group"><label>Estimated hours</label><input type="number" min="0" step="0.5" name="estimated_hours" placeholder="e.g. 2.5"></div></div><div class="form-group"><label>Details</label><textarea name="description" rows="2" placeholder="Acceptance criteria or useful context"></textarea></div><button class="btn btn-accent">Assign task</button></form>{% endif %}
   </section>
   <aside>
-    {% if can_manage %}<form method="post" action="{{ url_for('project_update_status', project_id=project.id) }}" class="card project-status-form"><h2 class="section-title">Project status</h2><select name="status">{% for status in ['Planning','In Progress','On Hold','Client Review','Completed','Cancelled'] %}<option {% if project.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select><button class="btn btn-outline btn-block">Update status</button></form>{% endif %}
+    {% if can_manage %}<form method="post" action="{{ url_for('project_update_status', project_id=project.id) }}" class="card project-status-form"><h2 class="section-title">Project status</h2><select name="status" aria-label="Project status">{% for status in ['Planning','In Progress','On Hold','Client Review','Completed','Cancelled'] %}<option {% if project.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select><button class="btn btn-outline btn-block">Update status</button></form>{% endif %}
     <div class="card"><h2 class="section-title">Project team</h2><div class="project-team">{% for member in members %}<div><span class="team-avatar">{{ member.name[:1]|upper }}</span><span>{{ member.name }}</span><small>{{ member.role }}</small></div>{% endfor %}</div></div>
     <div class="card"><h2 class="section-title">Activity</h2><div class="project-activity">{% for activity in activities %}<div><strong>{{ activity.event }}</strong>{% if activity.detail %}<span>{{ activity.detail }}</span>{% endif %}<small>{{ activity.user_name or 'System' }} · {{ activity.created_at }}</small></div>{% else %}<div class="empty-state">No project updates yet.</div>{% endfor %}</div></div>
   </aside>
