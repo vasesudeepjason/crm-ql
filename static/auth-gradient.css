@@ -1,6 +1,6 @@
 /* Animated gradient background for the sign-in pages.
    A plain CSS and JS port of Aceternity UI's "Background Gradient Animation" React component:
-   five blurred colour blobs drifting over a linear gradient, plus one that follows the pointer.
+   five blurred colour blobs drifting over a linear gradient, plus one that wanders at random.
    Colours are set to the QuantumLoop red, navy and white. */
 .ag {
   --gradient-background-start: rgb(172, 36, 48);
@@ -11,15 +11,17 @@
   --fourth-color: 245, 72, 72;
   --fifth-color: 255, 255, 255;
   --pointer-color: 240, 80, 90;
-  --size: 80%;
+  /* Blobs are square and sized from the longer screen edge, so each one fades to nothing
+     inside its own box and never shows a straight cut-off edge. */
+  --size: 76vmax;
   --blending-value: hard-light;
 
   position: absolute; inset: 0; z-index: 0; overflow: hidden;
   background: linear-gradient(40deg, var(--gradient-background-start), var(--gradient-background-end));
 }
-.ag-defs { position: absolute; width: 0; height: 0; }
-.ag-gradients { width: 100%; height: 100%; filter: url(#agBlurMe) blur(40px); }
-.ag.is-safari .ag-gradients { filter: blur(40px); }
+/* A plain, wide blur. The original's "goo" filter hardens each blob into a distinct shape,
+   which reads as bands of separate colour instead of one smooth gradient. */
+.ag-gradients { width: 100%; height: 100%; filter: blur(56px); }
 
 .ag-blob {
   position: absolute;
@@ -29,37 +31,38 @@
   opacity: 1;
 }
 .ag-first {
-  background: radial-gradient(circle at center, rgba(var(--first-color), .8) 0, rgba(var(--first-color), 0) 50%) no-repeat;
+  background: radial-gradient(circle closest-side at center, rgba(var(--first-color), .8) 0, rgba(var(--first-color), .56) 30%, rgba(var(--first-color), .26) 58%, rgba(var(--first-color), .08) 82%, rgba(var(--first-color), 0) 100%) no-repeat;
   transform-origin: center center;
-  animation: ag-move-vertical 30s ease infinite;
+  animation: ag-move-vertical 20s ease infinite;
 }
 .ag-second {
-  background: radial-gradient(circle at center, rgba(var(--second-color), .8) 0, rgba(var(--second-color), 0) 50%) no-repeat;
+  background: radial-gradient(circle closest-side at center, rgba(var(--second-color), .8) 0, rgba(var(--second-color), .56) 30%, rgba(var(--second-color), .26) 58%, rgba(var(--second-color), .08) 82%, rgba(var(--second-color), 0) 100%) no-repeat;
   transform-origin: calc(50% - 400px);
-  animation: ag-move-in-circle 20s reverse infinite;
+  animation: ag-move-in-circle 13s reverse infinite;
 }
 .ag-third {
-  background: radial-gradient(circle at center, rgba(var(--third-color), .8) 0, rgba(var(--third-color), 0) 50%) no-repeat;
+  background: radial-gradient(circle closest-side at center, rgba(var(--third-color), .8) 0, rgba(var(--third-color), .56) 30%, rgba(var(--third-color), .26) 58%, rgba(var(--third-color), .08) 82%, rgba(var(--third-color), 0) 100%) no-repeat;
   transform-origin: calc(50% + 400px);
-  animation: ag-move-in-circle 40s linear infinite;
+  animation: ag-move-in-circle 26s linear infinite;
 }
 .ag-fourth {
-  background: radial-gradient(circle at center, rgba(var(--fourth-color), .8) 0, rgba(var(--fourth-color), 0) 50%) no-repeat;
+  background: radial-gradient(circle closest-side at center, rgba(var(--fourth-color), .8) 0, rgba(var(--fourth-color), .56) 30%, rgba(var(--fourth-color), .26) 58%, rgba(var(--fourth-color), .08) 82%, rgba(var(--fourth-color), 0) 100%) no-repeat;
   transform-origin: calc(50% - 200px);
-  animation: ag-move-horizontal 40s ease infinite;
+  animation: ag-move-horizontal 26s ease infinite;
   opacity: .7;
 }
 .ag-fifth {
-  background: radial-gradient(circle at center, rgba(var(--fifth-color), .8) 0, rgba(var(--fifth-color), 0) 50%) no-repeat;
+  background: radial-gradient(circle closest-side at center, rgba(var(--fifth-color), .8) 0, rgba(var(--fifth-color), .56) 30%, rgba(var(--fifth-color), .26) 58%, rgba(var(--fifth-color), .08) 82%, rgba(var(--fifth-color), 0) 100%) no-repeat;
   transform-origin: calc(50% - 800px) calc(50% + 800px);
-  animation: ag-move-in-circle 20s ease infinite;
+  animation: ag-move-in-circle 13s ease infinite;
 }
-.ag-pointer {
-  position: absolute; width: 100%; height: 100%; top: -50%; left: -50%;
-  background: radial-gradient(circle at center, rgba(var(--pointer-color), .8) 0, rgba(var(--pointer-color), 0) 50%) no-repeat;
+.ag-wander {
+  position: absolute; width: 100vmax; height: 100vmax; top: -50vmax; left: -50vmax;
+  background: radial-gradient(circle closest-side at center, rgba(var(--pointer-color), .8) 0, rgba(var(--pointer-color), .56) 30%, rgba(var(--pointer-color), .26) 58%, rgba(var(--pointer-color), .08) 82%, rgba(var(--pointer-color), 0) 100%) no-repeat;
   mix-blend-mode: var(--blending-value);
   opacity: .7;
 }
+.ag-wander.is-moving { transition: transform 6s ease-in-out; }
 
 @keyframes ag-move-horizontal {
   0% { transform: translateX(-50%) translateY(-10%); }
@@ -77,6 +80,16 @@
   100% { transform: translateY(-50%); }
 }
 
+/* Light film grain over the gradient, mainly to hide banding in the dark navy. The texture
+   is an inline SVG turbulence tile; it sits above the blobs and below the sign-in card. */
+.ag::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 240px 240px;
+  mix-blend-mode: overlay;
+  opacity: .1;
+}
+
 /* The sign-in card sits above the gradient. */
 html:root .auth-shell.has-gradient { position: relative; isolation: isolate; background: var(--gradient-background-end, rgb(4, 39, 90)); }
 html:root .auth-shell.has-gradient > .auth-card { position: relative; z-index: 1; box-shadow: 0 24px 64px rgba(4, 16, 46, .28); }
@@ -84,4 +97,5 @@ html:root .auth-shell.has-gradient > .auth-card { position: relative; z-index: 1
 /* People who ask for less motion get the same colours, held still. */
 @media (prefers-reduced-motion: reduce) {
   .ag-blob { animation: none; }
+  .ag-wander.is-moving { transition: none; }
 }

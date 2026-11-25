@@ -21,27 +21,18 @@
 </script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=26">
 <link rel="stylesheet" href="{{ url_for('static', filename='interface.css') }}?v=16">
-<link rel="stylesheet" href="{{ url_for('static', filename='auth-gradient.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='auth-gradient.css') }}?v=8">
 </head>
 <body>
 <div class="auth-shell has-gradient">
   <div class="ag" aria-hidden="true">
-    <svg class="ag-defs" focusable="false">
-      <defs>
-        <filter id="agBlurMe">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
-          <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo" />
-          <feBlend in="SourceGraphic" in2="goo" />
-        </filter>
-      </defs>
-    </svg>
     <div class="ag-gradients">
       <div class="ag-blob ag-first"></div>
       <div class="ag-blob ag-second"></div>
       <div class="ag-blob ag-third"></div>
       <div class="ag-blob ag-fourth"></div>
       <div class="ag-blob ag-fifth"></div>
-      <div class="ag-pointer"></div>
+      <div class="ag-wander"></div>
     </div>
   </div>
   <div class="auth-card">
@@ -78,6 +69,6 @@
   });
 })();
 </script>
-<script src="{{ url_for('static', filename='auth-gradient.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='auth-gradient.js') }}?v=4"></script>
 </body>
 </html>

@@ -1,24 +1,35 @@
-// Pointer-following blob and Safari fallback for the sign-in gradient background.
-// Ported from the React component's effects: the blob eases one twentieth of the way
-// toward the pointer each time the pointer moves, exactly as the original does.
+// Sign-in gradient background: random movement.
+// Nothing here reacts to the pointer. One blob wanders to a new random spot every few
+// seconds, and the five looping blobs start from a random point in their loops so the
+// background looks different on every visit.
 (function () {
   var root = document.querySelector('.ag');
   if (!root) return;
 
-  // Safari renders the SVG "goo" filter poorly, so it gets a plain blur instead.
-  if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) root.classList.add('is-safari');
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  var blob = root.querySelector('.ag-pointer');
-  var shell = root.closest('.auth-shell') || root;
-  if (!blob) return;
-
-  var curX = 0, curY = 0;
-  shell.addEventListener('mousemove', function (event) {
-    var rect = blob.getBoundingClientRect();
-    var tgX = event.clientX - rect.left;
-    var tgY = event.clientY - rect.top;
-    curX += (tgX - curX) / 20;
-    curY += (tgY - curY) / 20;
-    blob.style.transform = 'translate(' + Math.round(curX) + 'px, ' + Math.round(curY) + 'px)';
+  root.querySelectorAll('.ag-blob').forEach(function (blob) {
+    var seconds = parseFloat(getComputedStyle(blob).animationDuration) || 30;
+    blob.style.animationDelay = '-' + (Math.random() * seconds).toFixed(2) + 's';
   });
+
+  var wanderer = root.querySelector('.ag-wander');
+  if (!wanderer) return;
+  var STEP_MS = 6000;
+
+  function wander() {
+    // The blob is as wide as the longer screen edge and starts centred on the top-left
+    // corner, so 0% to 100% of its own size covers the whole background.
+    var x = Math.round(Math.random() * 100);
+    var y = Math.round(Math.random() * 100);
+    wanderer.style.transform = 'translate(' + x + '%, ' + y + '%)';
+  }
+
+  wanderer.style.transform = 'translate(' + Math.round(Math.random() * 100) + '%, ' + Math.round(Math.random() * 100) + '%)';
+  // Start the first glide a moment later so the starting position is applied without a transition.
+  setTimeout(function () {
+    wanderer.classList.add('is-moving');
+    wander();
+  }, 60);
+  setInterval(wander, STEP_MS);
 })();
