@@ -144,3 +144,10 @@ html { scrollbar-gutter: stable; }
   .module-group h2 { margin-bottom: 6px; }
   .module-account { padding-block: 5px; }
 }
+
+/* QuantumLoop mark in the rail. The global icon rule strokes every svg path, so undo that here. */
+.rail-home .rail-mark { width: 34px; height: auto; }
+.rail-home .rail-mark path { stroke: none; }
+.rail-home .rail-mark-navy { fill: #272e54; }
+.rail-home .rail-mark-red { fill: #e31e23; }
+html:root[data-theme="dark"] .rail-home .rail-mark-navy { fill: #dfe5ff; }

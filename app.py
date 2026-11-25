@@ -694,7 +694,7 @@ def _reconcile_field_sessions(db):
 
 @app.before_request
 def require_login():
-    open_endpoints = {"login", "setup", "google_login", "google_callback", "manual_admin_login", "static"}
+    open_endpoints = {"login", "setup", "google_login", "google_callback", "manual_admin_login", "static", "favicon"}
     if request.endpoint in open_endpoints:
         return
     if request.endpoint is None:
@@ -3925,6 +3925,11 @@ def task_delete(task_id):
     log_activity("Deleted task", "task", task_id, task["title"])
     flash("Task deleted.", "success")
     return redirect(url_for("task_detail", task_id=task["parent_id"]) if task["parent_id"] else url_for("tasks_list"))
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_file(os.path.join(app.static_folder, "favicon.ico"), mimetype="image/x-icon", max_age=86400)
 
 
 @app.context_processor

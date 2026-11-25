@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..700&display=swap">
 <title>{% block title %}Lead Desk{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="48x48">
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
 <script>
 (function () {
   try {
@@ -18,9 +21,29 @@
 </script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=26">
 <link rel="stylesheet" href="{{ url_for('static', filename='interface.css') }}?v=16">
+<link rel="stylesheet" href="{{ url_for('static', filename='auth-gradient.css') }}?v=1">
 </head>
 <body>
-<div class="auth-shell">
+<div class="auth-shell has-gradient">
+  <div class="ag" aria-hidden="true">
+    <svg class="ag-defs" focusable="false">
+      <defs>
+        <filter id="agBlurMe">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+          <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo" />
+          <feBlend in="SourceGraphic" in2="goo" />
+        </filter>
+      </defs>
+    </svg>
+    <div class="ag-gradients">
+      <div class="ag-blob ag-first"></div>
+      <div class="ag-blob ag-second"></div>
+      <div class="ag-blob ag-third"></div>
+      <div class="ag-blob ag-fourth"></div>
+      <div class="ag-blob ag-fifth"></div>
+      <div class="ag-pointer"></div>
+    </div>
+  </div>
   <div class="auth-card">
     <button type="button" class="theme-toggle theme-toggle-auth" id="themeToggle" aria-label="Switch between light and dark mode">
       <span class="theme-toggle-icon theme-toggle-icon-sun">☀</span>
@@ -55,5 +78,6 @@
   });
 })();
 </script>
+<script src="{{ url_for('static', filename='auth-gradient.js') }}?v=1"></script>
 </body>
 </html>

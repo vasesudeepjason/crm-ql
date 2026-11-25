@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- QuantumLoop mark, centred in a square so browsers don't stretch it. In dark browser
+     themes the navy shape switches to a light tint so it stays visible on dark tab bars. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -284.750 1442.450 1442.450">
+  <style>
+    .navy { fill: #272e54; }
+    @media (prefers-color-scheme: dark) { .navy { fill: #dfe5ff; } }
+  </style>
+  <path class="navy" d="M470.95,134.46c49.76-21.48,97.42-46.09,152.95-50.81,141.95-11.52,246.71,36.67,333.13,145.61,142.47,180.18,262.94,391.27,403.32,574.6l2.1,16.76c-20.43,5.24-37.19,18.33-56.57,25.67-33.52,13.09-78.57,23.57-114.19,25.67-16.76,1.05-40.86,1.57-57.09,0-93.23-9.95-181.75-68.62-243.04-135.14"/>
+  <path fill="#e31e23" d="M891.56,737.35c-172.85,104.23-382.37,53.43-494.98-108.95L.07,63.23C-3.08,42.28,104.3,9.8,123.68,6.14c131.47-24.62,264.51,26.19,347.8,128.33l420.08,602.88h0Z"/>
+</svg>

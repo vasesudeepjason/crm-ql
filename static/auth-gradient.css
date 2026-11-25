@@ -1,0 +1,87 @@
+/* Animated gradient background for the sign-in pages.
+   A plain CSS and JS port of Aceternity UI's "Background Gradient Animation" React component:
+   five blurred colour blobs drifting over a linear gradient, plus one that follows the pointer.
+   Colours are set to the QuantumLoop red, navy and white. */
+.ag {
+  --gradient-background-start: rgb(172, 36, 48);
+  --gradient-background-end: rgb(4, 39, 90);
+  --first-color: 227, 30, 36;
+  --second-color: 255, 255, 255;
+  --third-color: 16, 42, 96;
+  --fourth-color: 245, 72, 72;
+  --fifth-color: 255, 255, 255;
+  --pointer-color: 240, 80, 90;
+  --size: 80%;
+  --blending-value: hard-light;
+
+  position: absolute; inset: 0; z-index: 0; overflow: hidden;
+  background: linear-gradient(40deg, var(--gradient-background-start), var(--gradient-background-end));
+}
+.ag-defs { position: absolute; width: 0; height: 0; }
+.ag-gradients { width: 100%; height: 100%; filter: url(#agBlurMe) blur(40px); }
+.ag.is-safari .ag-gradients { filter: blur(40px); }
+
+.ag-blob {
+  position: absolute;
+  width: var(--size); height: var(--size);
+  top: calc(50% - var(--size) / 2); left: calc(50% - var(--size) / 2);
+  mix-blend-mode: var(--blending-value);
+  opacity: 1;
+}
+.ag-first {
+  background: radial-gradient(circle at center, rgba(var(--first-color), .8) 0, rgba(var(--first-color), 0) 50%) no-repeat;
+  transform-origin: center center;
+  animation: ag-move-vertical 30s ease infinite;
+}
+.ag-second {
+  background: radial-gradient(circle at center, rgba(var(--second-color), .8) 0, rgba(var(--second-color), 0) 50%) no-repeat;
+  transform-origin: calc(50% - 400px);
+  animation: ag-move-in-circle 20s reverse infinite;
+}
+.ag-third {
+  background: radial-gradient(circle at center, rgba(var(--third-color), .8) 0, rgba(var(--third-color), 0) 50%) no-repeat;
+  transform-origin: calc(50% + 400px);
+  animation: ag-move-in-circle 40s linear infinite;
+}
+.ag-fourth {
+  background: radial-gradient(circle at center, rgba(var(--fourth-color), .8) 0, rgba(var(--fourth-color), 0) 50%) no-repeat;
+  transform-origin: calc(50% - 200px);
+  animation: ag-move-horizontal 40s ease infinite;
+  opacity: .7;
+}
+.ag-fifth {
+  background: radial-gradient(circle at center, rgba(var(--fifth-color), .8) 0, rgba(var(--fifth-color), 0) 50%) no-repeat;
+  transform-origin: calc(50% - 800px) calc(50% + 800px);
+  animation: ag-move-in-circle 20s ease infinite;
+}
+.ag-pointer {
+  position: absolute; width: 100%; height: 100%; top: -50%; left: -50%;
+  background: radial-gradient(circle at center, rgba(var(--pointer-color), .8) 0, rgba(var(--pointer-color), 0) 50%) no-repeat;
+  mix-blend-mode: var(--blending-value);
+  opacity: .7;
+}
+
+@keyframes ag-move-horizontal {
+  0% { transform: translateX(-50%) translateY(-10%); }
+  50% { transform: translateX(50%) translateY(10%); }
+  100% { transform: translateX(-50%) translateY(-10%); }
+}
+@keyframes ag-move-in-circle {
+  0% { transform: rotate(0deg); }
+  50% { transform: rotate(180deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes ag-move-vertical {
+  0% { transform: translateY(-50%); }
+  50% { transform: translateY(50%); }
+  100% { transform: translateY(-50%); }
+}
+
+/* The sign-in card sits above the gradient. */
+html:root .auth-shell.has-gradient { position: relative; isolation: isolate; background: var(--gradient-background-end, rgb(4, 39, 90)); }
+html:root .auth-shell.has-gradient > .auth-card { position: relative; z-index: 1; box-shadow: 0 24px 64px rgba(4, 16, 46, .28); }
+
+/* People who ask for less motion get the same colours, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .ag-blob { animation: none; }
+}
