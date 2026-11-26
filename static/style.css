@@ -2856,28 +2856,30 @@ html:root:not([data-theme]) {
 }
 html:root:not([data-theme]) { color-scheme: light; }
 
-/* ---- Dark variant: deep-navy glass ---- */
+/* ---- Dark variant: neutral dark grey, blue for links and selection, red for primary actions ---- */
 html:root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0C1626;
-  --content-panel: #17253A;
+  --bg: #131416;
+  --content-panel: #1D1E21;
   --surface: rgba(255, 255, 255, .06);
   --surface-2: rgba(255, 255, 255, .05);
   --surface-3: rgba(255, 255, 255, .09);
   --border: rgba(255, 255, 255, .12);
-  --border-strong: rgba(160, 190, 235, .3);
-  --text: #EAF0FA;
-  --text-soft: #A9B8D2;
-  --text-faint: #7486A6;
-  --accent: color-mix(in srgb, var(--brand-blue) 36%, white);
-  --accent-dark: color-mix(in srgb, var(--brand-blue) 22%, white);
+  --border-strong: rgba(255, 255, 255, .24);
+  --text: #EDEEF0;
+  --text-soft: #B3B6BD;
+  --text-faint: #858992;
+  --accent: #6EA8FE;
+  --accent-dark: #93BEFF;
+  --accent-red: #D8383E;
+  --accent-red-strong: #BE2C32;
   --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, .095), rgba(255, 255, 255, .04));
   --glass-border: rgba(255, 255, 255, .14);
   --glass-shadow: 0 12px 36px rgba(0, 0, 0, .3), inset 0 1px rgba(255, 255, 255, .1);
   --glass-shadow-hover: 0 18px 44px rgba(0, 0, 0, .38), inset 0 1px rgba(255, 255, 255, .14);
   --field-bg: rgba(255, 255, 255, .07);
   --field-border: rgba(255, 255, 255, .15);
-  --canvas: linear-gradient(165deg, #12294B 0%, #0F2040 35%, #0C1626 70%, #1A1626 100%);
+  --canvas: var(--bg);
   --hover-tint: rgba(255, 255, 255, .06);
   --pill-bg: rgba(255, 255, 255, .08);
 }
