@@ -3978,6 +3978,9 @@ def _init_work_tasks(db):
     _add_cols(db, "work_tasks", [
         ("project_id", "INTEGER REFERENCES projects(id) ON DELETE SET NULL"),
         ("legacy_project_task_id", "INTEGER"),
+        # Optional times of day (HH:MM) that go with start_date and due_date.
+        ("start_time", "TEXT"),
+        ("due_time", "TEXT"),
     ])
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_project ON work_tasks(project_id)")
     db.execute("""
@@ -4173,27 +4176,6 @@ def _find_links(text):
             seen.add(href)
             links.append((shown, href))
     return links
-
-
-def _keep_task_links(db, task_id, text, previous_text=None):
-    """Save every web link in the description on the task, so it stays after the text is edited.
-
-    A link someone removed stays removed while it is still in the text. It comes back only
-    when it is typed in again (it was not in previous_text). Returns True if anything changed.
-    """
-    before = {href for _, href in _find_links(previous_text)} if previous_text is not None else None
-    changed = False
-    for label, href in _find_links(text):
-        row = db.execute("SELECT id, removed_at FROM work_task_links WHERE task_id=? AND url=?", (task_id, href)).fetchone()
-        if row is None:
-            user = current_user()
-            db.execute("INSERT INTO work_task_links (task_id,url,label,user_id,created_at) VALUES (?,?,?,?,?)",
-                       (task_id, href, label[:300], user["id"] if user else None, now_str()))
-            changed = True
-        elif row["removed_at"] and before is not None and href not in before:
-            db.execute("UPDATE work_task_links SET removed_at=NULL WHERE id=?", (row["id"],))
-            changed = True
-    return changed
 
 
 @app.template_filter("linkify")
@@ -4477,7 +4459,97 @@ def tasks_calendar():
     )
 
 
-GANTT_DAY_WIDTHS = {"week": 36, "month": 16, "quarter": 6}
+GANTT_DAY_WIDTHS = {"day": 16, "week": 36, "month": 16, "quarter": 6}   # "day" is the width of 15 minutes
+
+
+def _clock(value):
+    """A time of day from a form as HH:MM, or None when it was left empty."""
+    value = (value or "").strip()
+    return datetime.strptime(value[:5], "%H:%M").strftime("%H:%M") if value else None
+
+
+def _moment_label(day, clock=None):
+    if not day:
+        return ""
+    when = date.fromisoformat(day)
+    text = f"{when.day} {when.strftime('%b')}"
+    if clock:
+        text += " " + datetime.strptime(clock, "%H:%M").strftime("%I:%M %p").lstrip("0")
+    return text
+
+
+def _schedule_label(start, start_time, due, due_time):
+    parts = [part for part in (_moment_label(start, start_time), _moment_label(due, due_time)) if part]
+    return " to ".join(parts[:1] if len(set(parts)) == 1 else parts) or "no dates"
+
+
+def _task_moments(item):
+    """When a task starts and ends, to the minute, or None if it has no dates.
+
+    A start date with no time begins that day and a due date with no time runs to the end
+    of it. A task with a single date takes that whole day, or one hour if it has a time.
+    """
+    def moment(day, clock, at_end):
+        try:
+            midnight = datetime.combine(date.fromisoformat(day), datetime.min.time())
+        except (TypeError, ValueError):
+            return None
+        try:
+            hours = datetime.strptime(clock, "%H:%M")
+        except (TypeError, ValueError):
+            return midnight + timedelta(days=1 if at_end else 0)
+        return midnight + timedelta(hours=hours.hour, minutes=hours.minute)
+
+    start = moment(item["start_date"], item["start_time"], False)
+    end = moment(item["due_date"], item["due_time"], True)
+    if start is None and end is None:
+        return None
+    if start is None:
+        start = end - (timedelta(hours=1) if item["due_time"] else timedelta(days=1))
+    if end is None:
+        end = start + (timedelta(hours=1) if item["start_time"] else timedelta(days=1))
+    return start, max(end, start + timedelta(minutes=15))
+
+
+def _tasks_gantt_day(scope, today):
+    """The Gantt at its closest scale: two weeks around today, in 15-minute steps."""
+    step, width, day_count = timedelta(minutes=15), GANTT_DAY_WIDTHS["day"], 14
+    now = datetime.now(APP_TIMEZONE).replace(tzinfo=None)
+    first = datetime.combine(today - timedelta(days=3), datetime.min.time())
+    last = first + timedelta(days=day_count)
+
+    def shown(item):
+        return scope["show_closed"] or item["status"] != "Complete"
+
+    def order(item):
+        when = _task_moments(item)
+        return (when is None, when[0] if when else now, item["id"])
+
+    def stamp(when):
+        return f"{when.day} {when.strftime('%b')} " + when.strftime("%I:%M %p").lstrip("0")
+
+    rows = []
+    for item in sorted(filter(shown, scope["top"]), key=order):
+        for task, is_sub in [(item, False)] + [(sub, True) for sub in sorted(filter(shown, item["subtasks"]), key=order)]:
+            when, bar = _task_moments(task), None
+            if when and when[1] > first and when[0] < last:
+                start, end = max(when[0], first), min(when[1], last)
+                offset = (start - first) // step
+                bar = {"start": offset, "days": max(1, -((first - end) // step) - offset),
+                       "label": f"{stamp(when[0])} to {stamp(when[1])}", "has": "both", "clipped": (start, end) != when}
+            rows.append({"task": task, "sub": is_sub, "bar": bar, "dated": bool(when)})
+
+    days = [first.date() + timedelta(days=offset) for offset in range(day_count)]
+    return _tasks_page(
+        "tasks_gantt.html", scope, view="gantt", month=None, rows=rows, zoom="day", day_width=width, day_cells=[],
+        days=day_count * 96, unit_minutes=15, first_day=first.strftime("%Y-%m-%dT%H:%M"),
+        months=[{"days": 96, "label": f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"} for day in days],
+        weeks=[{"label": f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}", "current": day == today and hour == now.hour}
+               for day in days for hour in range(24)],
+        today_offset=round((now - first) / step - 0.5, 2),
+        range_label=f"{days[0].day} {days[0].strftime('%B')} to {days[-1].day} {days[-1].strftime('%B %Y')}",
+        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if not row["bar"]),
+    )
 
 
 @app.get("/tasks/gantt")
@@ -4491,6 +4563,8 @@ def tasks_gantt():
     else:
         zoom = session.get("tasks_gantt_zoom", "month")
         zoom = zoom if zoom in GANTT_DAY_WIDTHS else "month"
+    if zoom == "day":
+        return _tasks_gantt_day(scope, today)
     day_width = GANTT_DAY_WIDTHS[zoom]
 
     def span(item):
@@ -4560,7 +4634,7 @@ def tasks_gantt():
             day_cells.append({"label": f"{day.strftime('%a')[0]} {day.day}", "off": day.weekday() >= 5, "today": day == today})
     return _tasks_page(
         "tasks_gantt.html", scope, view="gantt", month=None, rows=rows, zoom=zoom, day_width=day_width, day_cells=day_cells,
-        days=days, months=months, weeks=weeks, today_offset=(today - first).days, first_day=first.isoformat(),
+        days=days, months=months, weeks=weeks, today_offset=(today - first).days, first_day=first.isoformat(), unit_minutes=1440,
         range_label=f"{first.day} {first.strftime('%B %Y')} to {last.day} {last.strftime('%B %Y')}",
         total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if not row["bar"]),
     )
@@ -4616,9 +4690,6 @@ def task_detail(task_id):
                   (now_str(), user["id"], task_id)).rowcount:
         db.commit()
         _live_touch()
-    # Picks up links from descriptions written before links were saved, or set when the task was created.
-    if _keep_task_links(db, task_id, task["description"]):
-        db.commit()
     parent = db.execute("SELECT id, title FROM work_tasks WHERE id=?", (task["parent_id"],)).fetchone() if task["parent_id"] else None
     task["subtasks"] = _task_views(db, db.execute("SELECT * FROM work_tasks WHERE parent_id=? ORDER BY id", (task_id,)).fetchall())
     days = []
@@ -4714,6 +4785,41 @@ def task_file(file_id):
     return response
 
 
+@app.post("/tasks/<int:task_id>/links")
+@login_required
+def task_link_add(task_id):
+    """Add the web addresses typed into the Links field of a task."""
+    _check_task_token()
+    db, user = get_db(), current_user()
+    _get_work_task(db, task_id)
+    added = 0
+    for typed in request.form.get("url", "").split()[:10]:
+        shown = typed.strip(".,;")[:300]
+        href = shown if re.match(r"(?i)https?://", shown) else "https://" + shown
+        try:
+            host = urlsplit(href).hostname or ""
+        except ValueError:
+            continue
+        if "." not in host.strip(".") or not _URL_PATTERN.fullmatch(href):
+            continue
+        row = db.execute("SELECT id, removed_at FROM work_task_links WHERE task_id=? AND url=?", (task_id, href)).fetchone()
+        if row is None:
+            db.execute("INSERT INTO work_task_links (task_id,url,label,user_id,created_at) VALUES (?,?,?,?,?)",
+                       (task_id, href, shown, user["id"], now_str()))
+        elif row["removed_at"]:
+            db.execute("UPDATE work_task_links SET removed_at=NULL WHERE id=?", (row["id"],))
+        else:
+            added += 1   # already on the task: nothing to do, and not an error
+            continue
+        _log_task_event(db, task_id, f"added link {shown[:120]}")
+        added += 1
+    if added:
+        db.commit()
+    else:
+        flash("Enter a web address, such as https://example.com.", "error")
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
 @app.post("/tasks/links/<int:link_id>/delete")
 @login_required
 def task_link_delete(link_id):
@@ -4767,10 +4873,15 @@ def task_update(task_id):
         try:
             start = date.fromisoformat(form["start_date"]).isoformat() if form.get("start_date") else None
             due = date.fromisoformat(form["due_date"]).isoformat() if form.get("due_date") else None
+            start_time = _clock(form["start_time"]) if "start_time" in form else task["start_time"]
+            due_time = _clock(form["due_time"]) if "due_time" in form else task["due_time"]
         except ValueError:
             raise ValueError("Enter a valid start date and due date.")
         if start and due and due < start:
             raise ValueError("Choose a due date on or after the start date.")
+        start_time, due_time = start_time if start else None, due_time if due else None
+        if start and start == due and start_time and due_time and due_time <= start_time:
+            raise ValueError("Choose a due time after the start time.")
     except ValueError as error:
         flash(str(error), "error")
         return here
@@ -4791,13 +4902,14 @@ def task_update(task_id):
         _log_task_event(db, task_id, f"renamed this task to {title}")
     if description != (task["description"] or ""):
         _log_task_event(db, task_id, "updated the description")
-        _keep_task_links(db, task_id, description, task["description"] or "")
     if priority != task["priority"]:
         _log_task_event(db, task_id, f"set priority to {priority}" if priority else "cleared the priority")
     if start != task["start_date"]:
         _log_task_event(db, task_id, f"set start date to {start}" if start else "cleared the start date")
     if due != task["due_date"]:
         _log_task_event(db, task_id, f"set due date to {due}" if due else "cleared the due date")
+    if (start_time, due_time) != (task["start_time"], task["due_time"]) and (start, due) == (task["start_date"], task["due_date"]):
+        _log_task_event(db, task_id, "set the time to " + _schedule_label(start, start_time, due, due_time))
     for uid in sorted(wanted - current):
         db.execute("INSERT INTO work_task_assignees (task_id,user_id) VALUES (?,?)", (task_id, uid))
         _log_task_event(db, task_id, f"assigned this task to {names[uid]}")
@@ -4824,8 +4936,9 @@ def task_update(task_id):
             _note_on_project(db, task["project_id"], "Task removed", title)
             _note_on_project(db, new_project, "Task added", title)
     db.execute(
-        "UPDATE work_tasks SET title=?, description=?, priority=?, start_date=?, due_date=?, updated_at=? WHERE id=?",
-        (title, description, priority, start, due, now_str(), task_id),
+        """UPDATE work_tasks SET title=?, description=?, priority=?, start_date=?, start_time=?, due_date=?, due_time=?,
+                  updated_at=? WHERE id=?""",
+        (title, description, priority, start, start_time, due, due_time, now_str(), task_id),
     )
     _set_task_status(db, task, status)
     db.commit()
@@ -4836,23 +4949,42 @@ def task_update(task_id):
 @app.post("/tasks/<int:task_id>/dates")
 @login_required
 def task_set_dates(task_id):
-    """Save the dates of a task after its bar was dragged on the Gantt."""
+    """Save when a task happens after its bar was dragged on the Gantt.
+
+    The week, month and quarter scales send whole days and leave any times as they are.
+    The day scale sends exact moments (start_at, end_at) in 15-minute steps.
+    """
     _check_task_token()
     db = get_db()
     task = _get_work_task(db, task_id)
+    form = request.form
+    start_time, due_time = task["start_time"], task["due_time"]
     try:
-        start = date.fromisoformat(request.form["start_date"]).isoformat() if request.form.get("start_date") else None
-        due = date.fromisoformat(request.form["due_date"]).isoformat() if request.form.get("due_date") else None
-    except ValueError:
+        if form.get("start_at") or form.get("end_at"):
+            begin = datetime.strptime(form["start_at"], "%Y-%m-%dT%H:%M")
+            finish = datetime.strptime(form["end_at"], "%Y-%m-%dT%H:%M")
+            if finish <= begin:
+                abort(400)
+            # Midnight is stored as "no time": a day that starts at 0:00 or ends at 24:00 is just that day.
+            start, start_time = begin.date().isoformat(), begin.strftime("%H:%M") if begin.hour or begin.minute else None
+            if finish.hour or finish.minute:
+                due, due_time = finish.date().isoformat(), finish.strftime("%H:%M")
+            else:
+                due, due_time = (finish - timedelta(days=1)).date().isoformat(), None
+        else:
+            start = date.fromisoformat(form["start_date"]).isoformat() if form.get("start_date") else None
+            due = date.fromisoformat(form["due_date"]).isoformat() if form.get("due_date") else None
+            if start and due and due < start:
+                abort(400)
+            start_time, due_time = start_time if start else None, due_time if due else None
+            if start and start == due and start_time and due_time and due_time <= start_time:
+                start_time = due_time = None   # squeezed onto one day where the old times no longer fit
+    except (KeyError, ValueError):
         abort(400)
-    if start and due and due < start:
-        abort(400)
-    if start != task["start_date"]:
-        _log_task_event(db, task_id, f"set start date to {start}" if start else "cleared the start date")
-    if due != task["due_date"]:
-        _log_task_event(db, task_id, f"set due date to {due}" if due else "cleared the due date")
-    if (start, due) != (task["start_date"], task["due_date"]):
-        db.execute("UPDATE work_tasks SET start_date=?, due_date=?, updated_at=? WHERE id=?", (start, due, now_str(), task_id))
+    if (start, start_time, due, due_time) != (task["start_date"], task["start_time"], task["due_date"], task["due_time"]):
+        _log_task_event(db, task_id, "scheduled this task for " + _schedule_label(start, start_time, due, due_time))
+        db.execute("UPDATE work_tasks SET start_date=?, start_time=?, due_date=?, due_time=?, updated_at=? WHERE id=?",
+                   (start, start_time, due, due_time, now_str(), task_id))
         db.commit()
         _live_touch()
     return "", 204

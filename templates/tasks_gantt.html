@@ -1,13 +1,15 @@
 {% extends "tasks_base.html" %}
 {% import "_task_bits.html" as bits %}
 
-{% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} on the timeline{% if unscheduled %}, {{ unscheduled }} without dates{% endif %}. Drag a bar to move it, drag an end to change its length, or click an empty row to schedule that task.{% endblock %}
+{% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} on the timeline{% if unscheduled %}, {{ unscheduled }} {{ 'outside these two weeks or without dates' if zoom == 'day' else 'without dates' }}{% endif %}. Drag a bar to move it, drag an end to change its length, or click an empty row to schedule that task{{ ', in 15-minute steps' if zoom == 'day' }}.{% endblock %}
 
 {% block tasks_toolbar %}
 {% set closed_q = None if show_closed else 0 %}
-<a class="tk-chip" href="#gantt-today" data-gantt-today>Today</a>
-{% for key, label in [('week', 'Week'), ('month', 'Month'), ('quarter', 'Quarter')] %}
-<a class="tk-chip{% if zoom == key %} is-on{% endif %}" aria-pressed="{{ 'true' if zoom == key else 'false' }}"
+{# Today opens the day scale at the current time; once there it scrolls back to now. #}
+{% if zoom == 'day' %}<a class="tk-chip" href="#gantt-today" data-gantt-today title="Go to the current time">Today</a>
+{% else %}<a class="tk-chip" href="{{ url_for('tasks_gantt', zoom='day', assignee=assignee or None, closed=closed_q, project=project_filter) }}" data-gantt-fresh title="Go to the current time on the day scale">Today</a>{% endif %}
+{% for key, label in [('day', 'Day'), ('week', 'Week'), ('month', 'Month'), ('quarter', 'Quarter')] %}
+<a class="tk-chip{% if zoom == key %} is-on{% endif %}" aria-pressed="{{ 'true' if zoom == key else 'false' }}" data-gantt-fresh
    href="{{ url_for('tasks_gantt', zoom=key, assignee=assignee or None, closed=closed_q, project=project_filter) }}">{{ label }}</a>
 {% endfor %}
 {% endblock %}
@@ -17,7 +19,7 @@
 <p class="tk-nomatch tk-nomatch-floating">No tasks to show here yet.</p>
 {% else %}
 <div class="tk-gantt tk-zoom-{{ zoom }}" style="--tk-day: {{ day_width }}px; --tk-days: {{ days }};">
-  <div class="tk-gantt-scroll" data-gantt-scroll data-today="{{ today_offset }}" data-day="{{ day_width }}" data-days="{{ days }}" data-first="{{ first_day }}"
+  <div class="tk-gantt-scroll" data-gantt-scroll data-today="{{ today_offset }}" data-day="{{ day_width }}" data-days="{{ days }}" data-first="{{ first_day }}" data-unit="{{ unit_minutes }}"
        role="region" aria-label="Task timeline, {{ range_label }}" tabindex="0">
     <div class="tk-gantt-head" aria-hidden="true">
       <div class="tk-gantt-side"><span>Name</span><span class="tk-gantt-duecol">Due date</span></div>

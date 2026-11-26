@@ -219,6 +219,10 @@ html:root body .tk-tags-edit input { --control-height: 32px; flex: 1 1 200px; mi
 .tk-picker-menu label:hover { background: var(--tk-soft); }
 .tk-description { display: grid; gap: 8px; margin-top: 20px; }
 html:root body .tk-description textarea { width: 100%; min-height: 120px; resize: vertical; font-size: 14px; }
+.tk-link-form { display: grid; gap: 8px; margin-top: 16px; }
+.tk-link-row { display: flex; align-items: center; gap: 8px; }
+html:root body .tk-link-row input { --control-height: 32px; flex: 1; min-width: 0; font-size: 14px; }
+.tk-link-row .btn { flex: none; }
 .tk-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
 .tk-links li {
   display: inline-flex; align-items: center; max-width: 100%; min-width: 0;
@@ -651,3 +655,24 @@ html:root .tk-gantt-jump:hover { background: var(--control-muted); }
 .tk-gantt-addrow:hover .tk-gantt-side { background-color: var(--content-panel); }
 .tk-gantt .tk-add { padding: 5px 8px 5px 12px; border-top: 0; }
 .tk-gantt .tk-add .btn { display: none; }
+
+/* ---- Times beside the dates on a task ---- */
+.tk-dates > span.tk-dateset { display: flex; align-items: center; gap: 6px; flex: 1 1 230px; min-width: 0; }
+html:root body .tk-dates input[type="time"] { flex: 0 1 112px; }
+@media (max-width: 820px) {
+  /* On a phone the date and its time each take a full line, so neither is cut off. */
+  .tk-dates > span.tk-dateset { flex-wrap: wrap; flex-basis: 100%; }
+  html:root body .tk-dates input { flex: 1 1 150px; }
+  html:root body .tk-dates input[type="time"] { flex: 1 1 120px; }
+}
+
+/* ---- Gantt: day scale, where one step is 15 minutes ---- */
+.tk-zoom-day .tk-gantt-weeks > span { width: calc(4 * var(--tk-day)); padding-inline: 4px; font-size: 11px; letter-spacing: 0; }
+.tk-zoom-day .tk-gantt-months > span { border-inline-start-width: 2px; }
+.tk-zoom-day .tk-gantt-track {
+  background-image:
+    linear-gradient(to right, var(--tk-line) 2px, transparent 2px),
+    linear-gradient(to right, var(--tk-line) 1px, transparent 1px),
+    linear-gradient(to right, var(--tk-dayline) 1px, transparent 1px);
+  background-size: calc(96 * var(--tk-day)) 100%, calc(4 * var(--tk-day)) 100%, calc(2 * var(--tk-day)) 100%;
+}

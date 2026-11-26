@@ -263,7 +263,7 @@
   setInterval(tickClocks, 1000);
 
   // ---- Gantt: open on today, and come back to where you were after a reload ----
-  var ganttLeft = {};
+  var ganttLeft = {}, ganttPlaced = new WeakSet();
   function ganttToday(scroller, smooth) {
     var side = scroller.querySelector('.tk-gantt-side');
     var sideWidth = side ? side.offsetWidth : 0;
@@ -273,14 +273,21 @@
   }
   function placeGantt() {
     var scroller = document.querySelector('[data-gantt-scroll]');
-    if (!scroller || scroller.dataset.placed) return;
-    scroller.dataset.placed = '1';
+    if (!scroller || ganttPlaced.has(scroller)) return;
+    ganttPlaced.add(scroller);
     var key = location.pathname + location.search;
     if (ganttLeft[key] != null) scroller.scrollLeft = ganttLeft[key];
     else ganttToday(scroller, false);
     scroller.addEventListener('scroll', function () { ganttLeft[key] = scroller.scrollLeft; }, { passive: true });
   }
   document.addEventListener('click', function (event) {
+    // Choosing a scale (or Today from another scale) always opens it at today.
+    var fresh = event.target.closest('[data-gantt-fresh]');
+    if (fresh) {
+      var target = new URL(fresh.href, location.href);
+      delete ganttLeft[target.pathname + target.search];
+      return;
+    }
     var jump = event.target.closest('[data-gantt-today]');
     var scroller = jump && document.querySelector('[data-gantt-scroll]');
     if (!scroller) return;
@@ -291,20 +298,30 @@
   placeGantt();
 
   // ---- Gantt: drag a bar to move it, drag an end to resize it, click or drag an empty row to schedule ----
+  // The timeline is counted in steps: one day each on the week, month and quarter scales,
+  // 15 minutes each on the day scale (data-unit holds the minutes in one step).
   var drag = null, swallowClick = false, ganttTip = null, ganttGhost = null, lastX = 0, edgeFrame = 0;
-  function isoAdd(first, days) {
-    var day = new Date(first + 'T00:00:00Z');
-    day.setUTCDate(day.getUTCDate() + days);
-    return day.toISOString().slice(0, 10);
+  function momentAt(first, steps, minutes) {
+    return new Date(Date.parse((first.length === 10 ? first + 'T00:00' : first) + ':00Z') + steps * minutes * 60000);
   }
-  function dayLabel(first, days) {
-    return new Date(isoAdd(first, days) + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  function isoAt(first, steps, minutes) { return momentAt(first, steps, minutes).toISOString().slice(0, 16); }
+  function dayText(moment) { return moment.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }); }
+  function timeText(moment) { return moment.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }); }
+  function pointLabel(first, minutes, step) {
+    var moment = momentAt(first, step, minutes);
+    return minutes === 1440 ? dayText(moment) : dayText(moment) + ', ' + timeText(moment);
   }
-  function rangeLabel(first, s, n) {
-    return n === 1 ? dayLabel(first, s) : dayLabel(first, s) + ' – ' + dayLabel(first, s + n - 1) + ' · ' + n + ' days';
+  function rangeLabel(d) {
+    var from = momentAt(d.first, d.s, d.minutes);
+    if (d.minutes === 1440) {
+      return d.n === 1 ? dayText(from) : dayText(from) + ' – ' + dayText(momentAt(d.first, d.s + d.n - 1, 1440)) + ' · ' + d.n + ' days';
+    }
+    var to = momentAt(d.first, d.s + d.n, d.minutes), total = d.n * d.minutes;
+    var length = [total >= 60 ? Math.floor(total / 60) + ' h' : '', total % 60 ? total % 60 + ' min' : ''].join(' ').trim();
+    return dayText(from) + ', ' + timeText(from) + ' – ' + (dayText(to) === dayText(from) ? '' : dayText(to) + ', ') + timeText(to) + ' · ' + length;
   }
   function clamp(value, low, high) { return Math.max(low, Math.min(high, value)); }
-  // Which day of the timeline is under this x position. Measured from the track as it
+  // Which step of the timeline is under this x position. Measured from the track as it
   // is right now, so scrolling and page zoom never throw it off.
   function dayAt(track, x) {
     var days = Number(track.closest('[data-gantt-scroll]').dataset.days);
@@ -348,7 +365,7 @@
       drag.n = Math.abs(day - drag.day0) + 1;
     }
     paintDrag();
-    showTip(drag.track, rangeLabel(drag.first, drag.s, drag.n), dayAt(drag.track, x), true);
+    showTip(drag.track, rangeLabel(drag), dayAt(drag.track, x), true);
   }
   // While dragging near either edge of the timeline, keep it scrolling that way.
   function edgeScroll() {
@@ -376,12 +393,11 @@
     }
     return d;
   }
-  function saveDates(taskId, start, due) {
+  function saveDates(taskId, fields) {
     var tokenHolder = document.querySelector('[data-task-token]');
     var data = new FormData();
     data.append('token', tokenHolder ? tokenHolder.dataset.taskToken : '');
-    data.append('start_date', start);
-    data.append('due_date', due);
+    Object.keys(fields).forEach(function (name) { data.append(name, fields[name]); });
     fetch('/tasks/' + taskId + '/dates', { method: 'POST', body: data, credentials: 'same-origin' })
       .then(function (response) { if (!response.ok) throw new Error('Status ' + response.status); })
       .catch(function () { window.alert('Those dates could not be saved. The timeline will reload.'); })
@@ -407,6 +423,7 @@
     }
     drag.track = track; drag.x = lastX = event.clientX; drag.day0 = dayAt(track, event.clientX);
     drag.days = Number(scroller.dataset.days); drag.first = scroller.dataset.first;
+    drag.minutes = Number(scroller.dataset.unit) || 1440;
     drag.s0 = drag.s; drag.n0 = drag.n; drag.moved = false;
   });
   document.addEventListener('pointermove', function (event) {
@@ -429,9 +446,10 @@
       applyDrag(lastX);
       return;
     }
-    // Over a task with no dates: a marker follows the pointer and says which day a click would set.
+    // Over a task with no dates: a marker follows the pointer and says what a click would set.
     var track = event.pointerType !== 'touch' && event.target.closest && event.target.closest('.tk-gantt-track[data-schedule]');
     if (!track || event.target !== track) { hideHints(); return; }
+    var scroller = track.closest('[data-gantt-scroll]');
     var day = dayAt(track, event.clientX);
     if (!ganttGhost) {
       ganttGhost = document.createElement('span');
@@ -440,25 +458,30 @@
     }
     if (ganttGhost.parentNode !== track) track.appendChild(ganttGhost);
     ganttGhost.style.setProperty('--s', day);
-    showTip(track, 'Click or drag to schedule · ' + dayLabel(track.closest('[data-gantt-scroll]').dataset.first, day), day + 1);
+    showTip(track, 'Click or drag to schedule · ' + pointLabel(scroller.dataset.first, Number(scroller.dataset.unit) || 1440, day), day + 1);
   });
   document.documentElement.addEventListener('mouseleave', hideHints);
   document.addEventListener('pointerup', function () {
     var d = endDrag(false);
     if (!d) return;
     if (!d.moved) {
-      // A plain click on an empty row schedules the task for that one day.
-      if (d.mode === 'new') saveDates(d.id, isoAdd(d.first, d.day0), isoAdd(d.first, d.day0));
+      // A plain click on an empty row schedules the task for that one step: a day, or 15 minutes.
+      if (d.mode !== 'new') return;
+      d.s = d.day0; d.n = 1;
+    } else {
+      // The click that follows a drag must not open the task.
+      swallowClick = true;
+      setTimeout(function () { swallowClick = false; }, 0);
+      if (d.mode !== 'new' && d.s === d.s0 && d.n === d.n0) return;
+    }
+    if (d.minutes !== 1440) {
+      saveDates(d.id, { start_at: isoAt(d.first, d.s, d.minutes), end_at: isoAt(d.first, d.s + d.n, d.minutes) });
       return;
     }
-    // The click that follows a drag must not open the task.
-    swallowClick = true;
-    setTimeout(function () { swallowClick = false; }, 0);
-    if (d.mode !== 'new' && d.s === d.s0 && d.n === d.n0) return;
-    var start = isoAdd(d.first, d.s), due = isoAdd(d.first, d.s + d.n - 1);
+    var start = isoAt(d.first, d.s, 1440).slice(0, 10), due = isoAt(d.first, d.s + d.n - 1, 1440).slice(0, 10);
     if (d.mode === 'move' && d.has === 'due') start = '';
     if (d.mode === 'move' && d.has === 'start') due = '';
-    saveDates(d.id, start, due);
+    saveDates(d.id, { start_date: start, due_date: due });
   });
   document.addEventListener('pointercancel', function () { endDrag(true); });
   document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && drag) endDrag(true); });
