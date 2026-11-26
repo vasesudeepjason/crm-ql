@@ -91,7 +91,7 @@ html { scrollbar-gutter: stable; }
 .module-group { padding: 15px 10px; }
 .module-group h2 {
   margin: 0 6px 12px;
-  font: 700 1rem/1.3 var(--font-display);
+  font: 735 1rem/1.3 var(--font-display);
   color: var(--text);
 }
 .module-link {
@@ -110,7 +110,7 @@ html { scrollbar-gutter: stable; }
   color: var(--accent);
   background: var(--accent-tint);
   border-color: var(--accent-line);
-  font-weight: 700;
+  font-weight: 735;
 }
 .module-account { margin-top: auto; border-top: 1px solid var(--border-strong); padding-block: 12px; }
 @media (prefers-reduced-motion: reduce) {

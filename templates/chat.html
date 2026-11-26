@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ peer.name ~ ' · ' if peer else '' }}Chat · Lead Desk{% endblock %}
 {% block main_class %}chat-content{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static',filename='chat.css') }}?v=6">{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static',filename='chat.css') }}?v=7">{% endblock %}
 {% block content %}
 <header class="page-header"><h1 class="page-title">Chat</h1></header>
 <div class="chat-workspace{% if peer %} has-thread{% endif %}" data-updates="{{ url_for('chat_updates') }}"

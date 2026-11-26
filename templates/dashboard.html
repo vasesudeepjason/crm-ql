@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Lead Desk{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=8">{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=9">{% endblock %}
 {% block main_class %}dash{% endblock %}
 {% block content %}
 {% set calls_first = current_user.role == 'telecaller' %}

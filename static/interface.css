@@ -24,13 +24,13 @@ html:root[data-theme="dark"] {
   --action-hover: color-mix(in srgb, var(--brand-blue) 82%, white);
 }
 html:root body {
-  font: 500 14px/1.5 var(--font-body);
+  font: 525 14px/1.5 var(--font-body);
   letter-spacing: 0;
 }
 button, input, select, textarea { font-family: var(--font-body); }
 html:root :is(.page-title,.auth-title) {
   margin: 0;
-  font: 600 64px/1.2 var(--font-display);
+  font: 630 64px/1.2 var(--font-display);
   letter-spacing: -.01em;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -44,7 +44,7 @@ html:root .page-header {
 }
 .page-header > div:first-child { min-width: 0; }
 html:root .page-header::after, html:root .section-title::after { content: none; }
-html:root .page-sub { font: 500 14px/1.5 var(--font-body); letter-spacing: 0; }
+html:root .page-sub { font: 525 14px/1.5 var(--font-body); letter-spacing: 0; }
 html:root .section-title { font-size: 18px; letter-spacing: 0; }
 html:root :is(.card,.form-card,.stat-card,.table-card,.followup-list,.project-card,.task-list,.pipeline,.kanban-col,.kanban-card,.auth-card,.filter-bar,.import-bar,.visit-filter-row,.field-session-card,.visit-card,.camera-capture,.location-map,.match-panel,.planner-column,.calendar-panel,.day-agenda) {
   border: 1px solid var(--panel-line);
@@ -79,7 +79,7 @@ html:root body :is(input:is(:not([type]), [type=text], [type=search], [type=emai
   max-width: 100%;
   min-height: var(--control-height);
   padding: 6px var(--control-pad);
-  font: 500 var(--field-font-size)/1.5 var(--font-body);
+  font: 525 var(--field-font-size)/1.5 var(--font-body);
   color: var(--text);
   color-scheme: inherit;
   background: var(--content-panel);
@@ -123,7 +123,7 @@ html:root :is(.planner-status, .task-actions) select[name=status] {
   background-color: var(--accent-tint);
   color: var(--accent);
   border-color: var(--accent-line);
-  font-weight: 600;
+  font-weight: 630;
 }
 html:root .project-status-form select { width: 100%; }
 #my-project-notes { display: block; }
@@ -136,7 +136,7 @@ html:root .project-status-form select { width: 100%; }
 }
 html:root .form-group > label:not(.check-line) {
   color: var(--text-soft);
-  font: 600 13px/1.4 var(--font-body);
+  font: 630 13px/1.4 var(--font-body);
   letter-spacing: 0;
   text-transform: none;
 }
@@ -156,7 +156,7 @@ html:root .project-member-grid .check-line:has(input:checked) {
   border-color: var(--accent-line);
 }
 html:root input[type=file]::file-selector-button {
-  font: 600 13px/1.5 var(--font-body);
+  font: 630 13px/1.5 var(--font-body);
   padding: 6px 10px;
   margin-inline-end: 8px;
   color: var(--text);
@@ -205,12 +205,12 @@ html:root input[type=file]::file-selector-button:hover { background: var(--accen
         gap: 8px;
         padding: 7px 10px;
         border-radius: var(--control-radius);
-        font: 500 14px/1.4 var(--font-body);
+        font: 525 14px/1.4 var(--font-body);
         color: var(--text);
         background: var(--content-panel);
         overflow-wrap: anywhere;
       }
-      & option:checked { color: var(--accent); background: var(--accent-tint); font-weight: 600; }
+      & option:checked { color: var(--accent); background: var(--accent-tint); font-weight: 630; }
       & option:is(:hover,:focus-visible) { background: var(--control-muted); outline: 1px solid var(--control-line); outline-offset: -1px; }
       & option::checkmark { order: 1; margin-inline-start: auto; }
       & option:disabled { color: var(--text-soft); }
@@ -224,8 +224,8 @@ html:root input[type=file]::file-selector-button:hover { background: var(--accen
 @media (forced-colors: active) {
   html:root :is(.content, .auth-card) select:not([multiple]):is(:not([size]),[size="1"]) { appearance: auto; background-image: none; }
 }
-html:root .stat-value { font-size: 34px; font-weight: 600; line-height: 1.2; }
-html:root .btn { font-weight: 600; letter-spacing: 0; }
+html:root .stat-value { font-size: 34px; font-weight: 630; line-height: 1.2; }
+html:root .btn { font-weight: 630; letter-spacing: 0; }
 html:root :is(button,.btn,.mobile-topbar-add,.google-login-btn,input[type="submit"],input[type="button"]),
 html:root input::file-selector-button {
   border-radius: var(--control-radius);
@@ -256,18 +256,18 @@ html:root .auth-shell { background: var(--canvas); }
 .planner-tools { margin-bottom: 16px; }
 .view-switch { display: inline-flex; padding: 3px; border: 1px solid var(--border); border-radius: var(--control-radius); }
 .view-switch a { padding: 4px 15px; border-radius: var(--control-radius); color: var(--text-soft); }
-.view-switch a[aria-current] { color: var(--accent); background: var(--accent-tint); font-weight: 600; }
+.view-switch a[aria-current] { color: var(--accent); background: var(--accent-tint); font-weight: 630; }
 .planner-table { overflow-x: auto; }
 .project-view-switch { margin-block-end: 12px; }
 .project-view-switch a { flex: 1; text-align: center; }
 .project-details-table { max-width: 100%; }
-.project-details-table th[scope=row] { min-width: 12rem; font-weight: 600; }
+.project-details-table th[scope=row] { min-width: 12rem; font-weight: 630; }
 .project-details-table th[scope=row] a, .project-open { color: var(--accent); }
 .project-details-table th[scope=row] a:hover, .project-card:hover .project-open { text-decoration: underline; }
-.project-details-table small { display: block; margin-top: 2px; color: var(--text-soft); font-weight: 500; }
+.project-details-table small { display: block; margin-top: 2px; color: var(--text-soft); font-weight: 525; }
 .project-details-table td, .project-details-table thead th { white-space: nowrap; }
 .project-card .project-owner { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
-.planner-title,.agenda-title { display: block; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.planner-title,.agenda-title { display: block; color: var(--text); font-weight: 630; overflow-wrap: anywhere; }
 .planner-title:hover,.agenda-title:hover,.agenda-add:hover { text-decoration: underline; }
 .planner-table small,.planner-ticket small { display: block; color: var(--text-soft); }
 .planner-board { display: grid; grid-template-columns: repeat(5,minmax(190px,1fr)); gap: 10px; overflow-x: auto; padding-bottom: 12px; }
@@ -275,7 +275,7 @@ html:root .auth-shell { background: var(--canvas); }
   border: 1px solid var(--border); border-radius: 9px; background: var(--content-panel); min-width: 0;
 }
 .planner-column { background: var(--surface-2); padding: 10px; }
-.planner-column h2,.calendar-tools h2,.day-agenda h2 { font: 600 18px/1.3 var(--font-display); margin: 0; }
+.planner-column h2,.calendar-tools h2,.day-agenda h2 { font: 630 18px/1.3 var(--font-display); margin: 0; }
 .planner-column h2 { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
 .planner-column h2 span { font-size: 12px; color: var(--text-soft); }
 .planner-ticket { padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--content-panel); margin-top: 10px; }
@@ -289,7 +289,7 @@ html:root .planner-column.drop-target { border-color: var(--accent); background:
 .calendar-panel { overflow: hidden; }
 .calendar-tools,.day-agenda { padding: 16px; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); }
-.weekday { padding: 6px 4px; text-align: center; background: var(--surface-2); color: var(--text-soft); font-weight: 600; }
+.weekday { padding: 6px 4px; text-align: center; background: var(--surface-2); color: var(--text-soft); font-weight: 630; }
 .calendar-day,.calendar-blank {
   border-top: 1px solid var(--border); border-inline-end: 1px solid var(--border);
   padding: 6px; min-height: 76px; min-width: 0;
@@ -336,7 +336,7 @@ html:root .btn:disabled { color: var(--text-soft); background: var(--control-mut
 html:root :is(.tag,.owner-badge,.priority,.project-status,.interest-badge,.stage-pill,.visit-badge) {
   border-radius: var(--control-radius);
   padding: 3px 7px;
-  font: 600 12px/1.4 var(--font-body);
+  font: 630 12px/1.4 var(--font-body);
 }
 html:root :is(.project-status,.priority-low,.priority-medium,.tag,.owner-badge) {
   color: var(--text-soft);
@@ -356,13 +356,13 @@ html:root .status-Completed {
   background: color-mix(in srgb, var(--stage-won) 12%, var(--content-panel));
 }
 html:root :is(.table-card,.planner-table) thead th {
-  font: 600 12px/1.4 var(--font-body);
+  font: 630 12px/1.4 var(--font-body);
   letter-spacing: .025em;
   color: var(--text-soft);
   border-bottom: 1px solid var(--panel-line);
 }
 html:root :is(.table-card,.planner-table) tbody td { font-variant-numeric: tabular-nums; }
-html:root .empty-state { padding: 24px 16px; font: 500 14px/1.5 var(--font-body); color: var(--text-soft); }
+html:root .empty-state { padding: 24px 16px; font: 525 14px/1.5 var(--font-body); color: var(--text-soft); }
 html:root .flash { border-radius: var(--control-radius); border-inline-start: 3px solid currentColor; box-shadow: none; }
 html:root .view-switch { gap: 2px; background: var(--control-muted); border-color: var(--panel-line); }
 html:root .view-switch a:hover { color: var(--accent); }
