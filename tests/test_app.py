@@ -279,6 +279,17 @@ class Gantt(PageTest):
             self.assertEqual(response.status_code, 200, zoom)
             self.assertIn("Dated task", response.get_data(as_text=True))
 
+    def test_the_gantt_opens_on_the_day_scale(self):
+        user = make_user("manager")
+        fresh = Session(user)
+        make_task(user, "Scale task", start_date=date.today().isoformat(), due_date=date.today().isoformat(), assignees=[user])
+        self.assertIn('class="tk-gantt tk-zoom-day"', fresh.get("/tasks/gantt").get_data(as_text=True))
+        # A chosen scale is kept while filtering, but the Gantt tab goes back to the day scale.
+        fresh.get("/tasks/gantt?zoom=week")
+        page = fresh.get("/tasks/gantt?assignee=me").get_data(as_text=True)
+        self.assertIn('class="tk-gantt tk-zoom-week"', page)
+        self.assertIn('href="/tasks/gantt?zoom=day&amp;assignee=me"', page)
+
     def test_dragging_days_keeps_times_and_rejects_bad_ranges(self):
         task = make_task(self.user, start_date="2026-11-26", start_time="09:00", due_date="2026-11-27", due_time="17:00")
         self.assertEqual(self.session.post(f"/tasks/{task}/dates", {"start_date": "2026-12-01", "due_date": "2026-12-02"}).status_code, 204)

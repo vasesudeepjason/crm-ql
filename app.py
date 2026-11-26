@@ -4969,8 +4969,8 @@ def tasks_gantt():
     if zoom in GANTT_DAY_WIDTHS:
         session["tasks_gantt_zoom"] = zoom
     else:
-        zoom = session.get("tasks_gantt_zoom", "month")
-        zoom = zoom if zoom in GANTT_DAY_WIDTHS else "month"
+        zoom = session.get("tasks_gantt_zoom", "day")
+        zoom = zoom if zoom in GANTT_DAY_WIDTHS else "day"
     group = request.args.get("group")
     if group in ("project", "none"):
         session["tasks_gantt_group"] = group

@@ -33,7 +33,8 @@
 
 <nav class="tk-views" aria-label="Task views">
   {% for key, label, endpoint, glyph in views %}
-  <a href="{{ url_for(endpoint, assignee=assignee or None, closed=closed_arg, project=project_filter) }}"{% if key == view %} aria-current="page"{% endif %}>
+  {# The Gantt tab always opens on the day scale; the scale buttons inside it change it from there. #}
+  <a href="{{ url_for(endpoint, zoom='day' if key == 'gantt' else None, assignee=assignee or None, closed=closed_arg, project=project_filter) }}"{% if key == view %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round" stroke-linejoin="round"><path d="{{ glyph }}"/></svg>{{ label }}
   </a>
   {% endfor %}
