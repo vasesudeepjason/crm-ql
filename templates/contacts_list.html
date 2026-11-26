@@ -134,7 +134,7 @@
         <div class="rc-grid">
           <label class="rc-field is-wide"><span>Address</span><textarea name="address" rows="2" placeholder="Street address"></textarea></label>
           <label class="rc-field"><span>City</span><input type="text" name="city" placeholder="City or town"></label>
-          <label class="rc-field"><span>State</span><input type="text" name="state" placeholder="State or territory"></label>
+          <label class="rc-field"><span>State</span><select name="state"><option value="">Select a state</option>{% for s in state_options %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></label>
           <label class="rc-field"><span>Pincode</span><input type="text" name="pincode" placeholder="Postal code"></label>
           <label class="rc-field"><span>Country</span><input type="text" name="country" placeholder="Country name" value="India"></label>
         </div>

@@ -3092,7 +3092,7 @@ def add_company():
             name, f.get("industry", "").strip(), f.get("phone", "").strip(), f.get("alternate_phone", "").strip(),
             f.get("email", "").strip(), f.get("website", "").strip(), f.get("gbp_link", "").strip(), f.get("notes", "").strip(),
             f.get("billing_address", "").strip(), f.get("address", "").strip(), f.get("city", "").strip(),
-            f.get("state", "").strip(), f.get("pincode", "").strip(), f.get("country", "India").strip() or "India",
+            _invoice_state(f.get("state")), f.get("pincode", "").strip(), f.get("country", "India").strip() or "India",
             f.get("gstin", "").strip().upper(), f.get("pan", "").strip().upper(), f.get("cin", "").strip().upper(),
             f.get("status", "Prospect"), f.get("account_owner_id") or user["id"], now_str(), now_str(),
         ),
@@ -3158,7 +3158,7 @@ def edit_company(company_id):
             name, f.get("industry", "").strip(), f.get("phone", "").strip(), f.get("alternate_phone", "").strip(),
             f.get("email", "").strip(), f.get("website", "").strip(), f.get("gbp_link", "").strip(), f.get("notes", "").strip(),
             f.get("billing_address", "").strip(), f.get("address", "").strip(), f.get("city", "").strip(),
-            f.get("state", "").strip(), f.get("pincode", "").strip(), f.get("country", "India").strip() or "India",
+            _invoice_state(f.get("state"), company["state"]), f.get("pincode", "").strip(), f.get("country", "India").strip() or "India",
             f.get("gstin", "").strip().upper(), f.get("pan", "").strip().upper(), f.get("cin", "").strip().upper(),
             f.get("status", "Prospect"), now_str(), company_id,
         ),
@@ -3913,62 +3913,126 @@ def invoices_list():
     return render_template('invoices_list.html', invoices=invoices)
 
 
-@app.route('/invoices/new', methods=['GET','POST'])
-@manager_required
-def invoice_new():
-    db=get_db(); settings=_invoice_settings(db)
-    if request.method == 'GET':
-        companies=db.execute("SELECT * FROM companies ORDER BY name").fetchall()
-        return render_template('invoice_form.html', companies=companies, settings=settings,
-                               next_invoice_no=_next_invoice_no(db, settings['invoice_prefix']))
-    f=request.form
+# States and union territories offered for an invoice's shipping state. GST is
+# worked out from this value, so it is a fixed list rather than free text.
+INVOICE_STATES = (
+    "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana",
+    "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
+    "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana",
+    "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+    "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
+    "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry",
+    "Outside India",
+)
+
+app.jinja_env.globals["state_options"] = INVOICE_STATES
+
+
+def _invoice_state(value, keep=""):
+    """The listed spelling of a state. `keep` lets an invoice hold on to a value typed before the list existed."""
+    value = (value or "").strip()
+    for state in INVOICE_STATES:
+        if state.casefold() == value.casefold():
+            return state
+    return value if value and value == (keep or "").strip() else ""
+
+
+def _read_invoice_form(f, keep_state=""):
+    """Return (fields, items, error) for a submitted invoice form; fields maps invoices columns to values."""
     names=f.getlist('item_name[]'); codes=f.getlist('item_code[]'); qtys=f.getlist('item_qty[]'); rates=f.getlist('item_rate[]'); taxes=f.getlist('item_tax[]')
     items=[]
     for i,name in enumerate(names):
         if not name.strip(): continue
         try: qty=float(qtys[i]); rate=float(rates[i]); tax=float(taxes[i])
         except (ValueError,IndexError):
-            flash('Every invoice item needs valid quantity, rate and tax values.','error'); return redirect(url_for('invoice_new'))
+            return None, None, 'Every invoice item needs valid quantity, rate and tax values.'
         items.append((name.strip(), codes[i].strip() if i < len(codes) else '', qty, rate, tax))
     if not items or not f.get('bill_name','').strip():
-        flash('Billing company and at least one item are required.','error'); return redirect(url_for('invoice_new'))
-    invoice_no=f.get('invoice_no','').strip() or _next_invoice_no(db,settings['invoice_prefix'])
+        return None, None, 'Billing company and at least one item are required.'
 
     # GST is determined from the shipping state.
     # Telangana = intra-State (CGST + SGST); any other state = inter-State (IGST).
-    ship_state=f.get('ship_state','').strip()
+    ship_state=_invoice_state(f.get('ship_state'), keep_state)
     is_interstate=bool(ship_state) and ship_state.casefold() != 'telangana'
-    if is_interstate:
-        tax_mode='INTER'
-        cgst=0.0
-        sgst=0.0
-        igst=float(f.get('igst_pct') or 18)
-    else:
-        tax_mode='INTRA'
-        cgst=float(f.get('cgst_pct') or 9)
-        sgst=float(f.get('sgst_pct') or 9)
-        igst=0.0
-
-    received=float(f.get('received_amount') or 0)
+    try:
+        if is_interstate:
+            tax_mode='INTER'; cgst=0.0; sgst=0.0; igst=float(f.get('igst_pct') or 18)
+        else:
+            tax_mode='INTRA'; cgst=float(f.get('cgst_pct') or 9); sgst=float(f.get('sgst_pct') or 9); igst=0.0
+        received=float(f.get('received_amount') or 0)
+    except ValueError:
+        return None, None, 'Tax percentages and the amount received must be numbers.'
     total_tax_pct = igst if is_interstate else (cgst + sgst)
     total=sum(q*r*(1+total_tax_pct/100) for _,_,q,r,_ in items)
 
+    text=lambda key: f.get(key,'').strip()
+    fields={
+        'invoice_no': text('invoice_no'), 'invoice_date': text('invoice_date'), 'company_id': f.get('company_id') or None,
+        'bill_name': text('bill_name'), 'bill_address': text('bill_address'), 'bill_gstin': text('bill_gstin').upper(),
+        'bill_pan': text('bill_pan').upper(), 'bill_website': text('bill_website'),
+        'ship_name': text('ship_name'), 'ship_address': text('ship_address'), 'ship_gstin': text('ship_gstin').upper(),
+        'ship_pan': text('ship_pan').upper(), 'ship_website': text('ship_website'), 'ship_state': ship_state,
+        'notes': text('notes'), 'terms': text('terms'), 'cgst_pct': cgst, 'sgst_pct': sgst, 'igst_pct': igst, 'tax_mode': tax_mode,
+        'received_amount': received, 'total_amount': total,
+        'bill_contact_name': text('bill_contact_name'), 'bill_contact_email': text('bill_contact_email'),
+        'bill_contact_phone': text('bill_contact_phone'),
+    }
+    return fields, items, None
+
+
+def _invoice_form_page(db, settings, invoice=None, items=()):
+    companies=db.execute("SELECT * FROM companies ORDER BY name").fetchall()
+    saved_state=invoice['ship_state'] if invoice else ''
+    return render_template('invoice_form.html', companies=companies, settings=settings, invoice=invoice, items=items,
+                           states=INVOICE_STATES, ship_state=_invoice_state(saved_state, saved_state),
+                           next_invoice_no='' if invoice else _next_invoice_no(db, settings['invoice_prefix']))
+
+
+@app.route('/invoices/new', methods=['GET','POST'])
+@manager_required
+def invoice_new():
+    db=get_db(); settings=_invoice_settings(db)
+    if request.method == 'GET':
+        return _invoice_form_page(db, settings)
+    fields, items, error = _read_invoice_form(request.form)
+    if error:
+        flash(error,'error'); return redirect(url_for('invoice_new'))
+    fields['invoice_no']=fields['invoice_no'] or _next_invoice_no(db,settings['invoice_prefix'])
+    columns=[*fields, 'created_by', 'created_at']
     try:
-        cur=db.execute("""INSERT INTO invoices (invoice_no,invoice_date,company_id,bill_name,bill_address,bill_gstin,bill_pan,bill_website,
-            ship_name,ship_address,ship_gstin,ship_pan,ship_website,ship_state,notes,terms,cgst_pct,sgst_pct,igst_pct,tax_mode,received_amount,total_amount,created_by,created_at,
-            bill_contact_name,bill_contact_email,bill_contact_phone)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
-            invoice_no,f.get('invoice_date','').strip(),f.get('company_id') or None,f.get('bill_name','').strip(),f.get('bill_address','').strip(),
-            f.get('bill_gstin','').strip().upper(),f.get('bill_pan','').strip().upper(),f.get('bill_website','').strip(),
-            f.get('ship_name','').strip(),f.get('ship_address','').strip(),f.get('ship_gstin','').strip().upper(),f.get('ship_pan','').strip().upper(),f.get('ship_website','').strip(),
-            ship_state,f.get('notes','').strip(),f.get('terms','').strip(),cgst,sgst,igst,tax_mode,received,total,current_user()['id'],now_str(),
-            f.get('bill_contact_name','').strip(), f.get('bill_contact_email','').strip(), f.get('bill_contact_phone','').strip()))
+        cur=db.execute(f"INSERT INTO invoices ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+                       [*fields.values(), current_user()['id'], now_str()])
         iid=cur.lastrowid
         db.executemany("INSERT INTO invoice_items (invoice_id,item_name,code,qty,rate,tax_pct) VALUES (?,?,?,?,?,?)",[(iid,*x) for x in items]); db.commit()
     except sqlite3.IntegrityError:
+        db.rollback()
         flash('That invoice number already exists. Please use a different number.','error'); return redirect(url_for('invoice_new'))
-    log_activity('Invoice Created', 'invoice', iid, invoice_no, f.get('bill_name','').strip())
-    flash(f'Invoice {invoice_no} created.','success'); return redirect(url_for('invoice_detail', invoice_id=iid))
+    log_activity('Invoice Created', 'invoice', iid, fields['invoice_no'], fields['bill_name'])
+    flash(f"Invoice {fields['invoice_no']} created.",'success'); return redirect(url_for('invoice_detail', invoice_id=iid))
+
+
+@app.route('/invoices/<int:invoice_id>/edit', methods=['GET','POST'])
+@manager_required
+def invoice_edit(invoice_id):
+    db=get_db(); settings=_invoice_settings(db)
+    inv=db.execute("SELECT * FROM invoices WHERE id=?",(invoice_id,)).fetchone()
+    if not inv: flash('Invoice not found.','error'); return redirect(url_for('invoices_list'))
+    if request.method == 'GET':
+        items=db.execute("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id",(invoice_id,)).fetchall()
+        return _invoice_form_page(db, settings, inv, items)
+    fields, items, error = _read_invoice_form(request.form, keep_state=inv['ship_state'])
+    if error:
+        flash(error,'error'); return redirect(url_for('invoice_edit', invoice_id=invoice_id))
+    fields['invoice_no']=fields['invoice_no'] or inv['invoice_no']
+    try:
+        db.execute(f"UPDATE invoices SET {','.join(column + '=?' for column in fields)} WHERE id=?", [*fields.values(), invoice_id])
+        db.execute("DELETE FROM invoice_items WHERE invoice_id=?", (invoice_id,))
+        db.executemany("INSERT INTO invoice_items (invoice_id,item_name,code,qty,rate,tax_pct) VALUES (?,?,?,?,?,?)",[(invoice_id,*x) for x in items]); db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        flash('That invoice number already exists. Please use a different number.','error'); return redirect(url_for('invoice_edit', invoice_id=invoice_id))
+    log_activity('Invoice Updated', 'invoice', invoice_id, fields['invoice_no'], fields['bill_name'])
+    flash(f"Invoice {fields['invoice_no']} updated.",'success'); return redirect(url_for('invoice_detail', invoice_id=invoice_id))
 
 
 @app.route('/invoices/<int:invoice_id>')
