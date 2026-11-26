@@ -33,7 +33,9 @@
   const atBottom = () => history && history.scrollHeight - history.scrollTop - history.clientHeight < 48;
   async function markRead() {
     const through = lastId();
-    if (signal.aborted || !form || acknowledging || through <= acknowledged || document.hidden || !atBottom()) return;
+    // Messages count as read only once this window is in front and focused, so a
+    // conversation left open in the background keeps its unread count and notifications.
+    if (signal.aborted || !form || acknowledging || through <= acknowledged || document.hidden || !document.hasFocus() || !atBottom()) return;
     acknowledging = true;
     try {
       const response = await fetch(workspace.dataset.read, {method: 'POST',
@@ -166,6 +168,7 @@
   }
   const poll = window.setInterval(refresh, 4000);
   document.addEventListener('visibilitychange', refresh, {signal});
+  window.addEventListener('focus', markRead, {signal});
   document.addEventListener('crm:chat-activity', refresh, {signal});  // pushed by live.js
   window.addEventListener('online', refresh, {signal});
   document.addEventListener('turbo:before-render', () => {

@@ -82,16 +82,31 @@
     item.append(link, close);
     area.append(item);
 
-    var timer = window.setTimeout(function () { item.remove(); }, TOAST_MS);
+    // The countdown only runs while the person can see the toast, so one that arrives
+    // while they are in another window is still there when they come back.
+    var timer = null;
+    item.liveArm = function (delay) {
+      window.clearTimeout(timer);
+      if (attending()) timer = window.setTimeout(function () { item.remove(); }, delay || TOAST_MS);
+    };
+    item.liveArm();
     close.addEventListener('click', function () { window.clearTimeout(timer); item.remove(); });
     link.addEventListener('click', function () { window.clearTimeout(timer); item.remove(); });
     item.addEventListener('mouseenter', function () { window.clearTimeout(timer); });
-    item.addEventListener('mouseleave', function () { timer = window.setTimeout(function () { item.remove(); }, 3000); });
+    item.addEventListener('mouseleave', function () { item.liveArm(3000); });
   }
+
+  function armWaitingToasts() {
+    document.querySelectorAll('.live-toast').forEach(function (item) { if (item.liveArm) item.liveArm(); });
+  }
+
+  // True only when this window is in front and has focus. A conversation left open in a
+  // window the person is not looking at must still notify them.
+  function attending() { return !document.hidden && document.hasFocus(); }
 
   function viewingChatWith(senderId) {
     var workspace = document.querySelector('.chat-workspace');
-    return !!workspace && !document.hidden && String(workspace.dataset.peer) === String(senderId);
+    return !!workspace && attending() && String(workspace.dataset.peer) === String(senderId);
   }
 
   // ---- incoming state ----
@@ -210,6 +225,8 @@
     if (!socket) connect();
   });
   window.addEventListener('online', function () { if (polling) poll(); if (!socket) connect(); });
+  window.addEventListener('focus', armWaitingToasts);
+  document.addEventListener('visibilitychange', armWaitingToasts);
   window.addEventListener('pagehide', disconnect);
   window.addEventListener('pageshow', connect);
   rememberTitle();
