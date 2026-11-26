@@ -166,6 +166,7 @@
   }
   const poll = window.setInterval(refresh, 4000);
   document.addEventListener('visibilitychange', refresh, {signal});
+  document.addEventListener('crm:chat-activity', refresh, {signal});  // pushed by live.js
   window.addEventListener('online', refresh, {signal});
   document.addEventListener('turbo:before-render', () => {
     clearInterval(poll);

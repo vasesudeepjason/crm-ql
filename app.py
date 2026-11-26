@@ -4,6 +4,9 @@ import csv
 import io
 import os
 import shutil
+from urllib.parse import urlsplit
+import threading
+import time as time_module
 import base64
 import binascii
 import hashlib
@@ -25,6 +28,13 @@ try:
 except ImportError:  # Keeps the setup page usable until requirements are installed.
     OAuth = None
     OAuthError = Exception
+
+try:
+    from flask_sock import Sock
+    from simple_websocket import ConnectionClosed
+except ImportError:  # Without it the app still runs; pages ask for updates every few seconds instead.
+    Sock = None
+    ConnectionClosed = Exception
 
 from invoice_pdf import build_invoice_pdf
 
@@ -89,6 +99,10 @@ app.config.update(
 # Only trust forwarded host/protocol headers when the deployment has a known proxy.
 if os.environ.get("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# Keep-alive pings stop proxies from closing an idle WebSocket.
+app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
+sock = Sock(app) if Sock else None
 
 oauth = OAuth(app) if OAuth else None
 google = None
@@ -2533,6 +2547,7 @@ def send_chat_message(peer_id):
             return jsonify(next_client_id=uuid.uuid4().hex), 409
         abort(409)
     db.commit()
+    _live_touch()
     if request.accept_mimetypes.best == "application/json":
         return jsonify(next_client_id=uuid.uuid4().hex)
     return redirect(url_for("chat", peer_id=peer_id), code=303)
@@ -2549,6 +2564,7 @@ def read_chat_messages(peer_id):
     db.execute("""UPDATE chat_messages SET is_read=1
         WHERE recipient_id=? AND sender_id=? AND id<=? AND is_read=0""", (current_user()["id"],peer_id,through))
     db.commit()
+    _live_touch()
     return "", 204
 
 
@@ -3609,6 +3625,7 @@ def _init_work_tasks(db):
     ])
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_project ON work_tasks(project_id)")
     _migrate_project_tasks(db)
+    _init_notifications(db)
 
 
 def _migrate_project_tasks(db):
@@ -3920,6 +3937,11 @@ def task_create():
 def task_detail(task_id):
     db, user = get_db(), current_user()
     task = _task_views(db, [_get_work_task(db, task_id)])[0]
+    # Opening a task clears its "assigned to you" notification.
+    if db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND task_id=? AND read_at IS NULL",
+                  (now_str(), user["id"], task_id)).rowcount:
+        db.commit()
+        _live_touch()
     parent = db.execute("SELECT id, title FROM work_tasks WHERE id=?", (task["parent_id"],)).fetchone() if task["parent_id"] else None
     task["subtasks"] = _task_views(db, db.execute("SELECT * FROM work_tasks WHERE parent_id=? ORDER BY id", (task_id,)).fetchall())
     days = []
@@ -3998,6 +4020,7 @@ def task_update(task_id):
     for uid in sorted(wanted - current):
         db.execute("INSERT INTO work_task_assignees (task_id,user_id) VALUES (?,?)", (task_id, uid))
         _log_task_event(db, task_id, f"assigned this task to {names[uid]}")
+        _notify_task_assigned(db, uid, task_id, title)
     for uid in sorted(current - wanted):
         db.execute("DELETE FROM work_task_assignees WHERE task_id=? AND user_id=?", (task_id, uid))
         _log_task_event(db, task_id, f"unassigned {names.get(uid, 'a former user')}")
@@ -4025,6 +4048,7 @@ def task_update(task_id):
     )
     _set_task_status(db, task, status)
     db.commit()
+    _live_touch()
     return here
 
 
@@ -4071,6 +4095,165 @@ def task_delete(task_id):
     return redirect(url_for("task_detail", task_id=task["parent_id"]) if task["parent_id"] else url_for("tasks_list"))
 
 
+# ---------- Live notifications (unread counts, toasts, realtime chat) ----------
+# Each open page keeps one WebSocket to the server, and the server pushes a small update
+# whenever the signed-in person's unread counts change. A change made in this process wakes
+# its sockets at once; every socket also re-checks the database each second, so changes made
+# by another server process still arrive without a message broker. Where a socket cannot be
+# used (library missing, non-threaded server, proxy not passing upgrades), the page falls
+# back to asking /live/state every few seconds.
+
+LIVE_CHECK_SECONDS = 1.0       # how often a socket re-checks the database for other processes' changes
+LIVE_WAKE_SECONDS = 0.25       # how quickly a socket notices a change made in this process
+LIVE_MAX_SOCKETS = max(1, int(os.environ.get("REALTIME_MAX_SOCKETS", "200")))
+_live_lock = threading.Lock()
+_live_sockets = 0
+_live_version = 0
+
+
+def _live_touch():
+    """Note that something changed, so sockets in this process push without waiting."""
+    global _live_version
+    _live_version += 1
+
+
+def _init_notifications(db):
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            task_id INTEGER REFERENCES work_tasks(id) ON DELETE CASCADE,
+            actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            created_at TEXT NOT NULL,
+            read_at TEXT
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read_at, id)")
+
+
+def _notify_task_assigned(db, user_id, task_id, task_title):
+    """Tell someone a task was assigned to them, unless they assigned it to themselves."""
+    actor = current_user()
+    if not actor or actor["id"] == user_id:
+        return
+    db.execute(
+        "INSERT INTO notifications (user_id, kind, task_id, actor_id, title, body, created_at) VALUES (?,?,?,?,?,?,?)",
+        (user_id, "task_assigned", task_id, actor["id"], f"{actor['name']} assigned you a task", task_title, now_str()),
+    )
+
+
+def _live_counts(db, user_id):
+    chat = db.execute("SELECT COUNT(*) FROM chat_messages WHERE recipient_id=? AND is_read=0", (user_id,)).fetchone()[0]
+    tasks = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL", (user_id,)).fetchone()[0]
+    return {"chat": chat, "tasks": tasks, "all": chat + tasks}
+
+
+def _live_state(db, user_id, chat_after, note_after):
+    """Unread counts plus anything new since the given cursors. A cursor below zero means
+    "just tell me where things stand", so a freshly opened page never replays old items."""
+    state = _live_counts(db, user_id)
+    state["chats"], state["notes"] = [], []
+    if chat_after >= 0:
+        state["chats"] = [
+            {"id": r[0], "from": r[1], "name": r[2], "body": r[3]}
+            for r in db.execute(
+                """SELECT m.id, m.sender_id, u.name, substr(m.body, 1, 140) FROM chat_messages m
+                   JOIN users u ON u.id = m.sender_id
+                   WHERE m.recipient_id=? AND m.id>? AND m.is_read=0 ORDER BY m.id LIMIT 20""", (user_id, chat_after))
+        ]
+    if note_after >= 0:
+        state["notes"] = [
+            {"id": r[0], "task": r[1], "title": r[2], "body": r[3]}
+            for r in db.execute(
+                """SELECT id, task_id, title, body FROM notifications
+                   WHERE user_id=? AND id>? AND read_at IS NULL ORDER BY id LIMIT 20""", (user_id, note_after))
+        ]
+    state["chat_cursor"] = db.execute("SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE recipient_id=?", (user_id,)).fetchone()[0]
+    state["note_cursor"] = db.execute("SELECT COALESCE(MAX(id), 0) FROM notifications WHERE user_id=?", (user_id,)).fetchone()[0]
+    return state
+
+
+def _live_cursors():
+    """The newest chat message and notification the page has already seen."""
+    return (request.args.get("chat_after", default=-1, type=int),
+            request.args.get("note_after", default=-1, type=int))
+
+
+@app.get("/live/state")
+@login_required
+def live_state():
+    """One-off check, used when a WebSocket is not available."""
+    response = jsonify(_live_state(get_db(), current_user()["id"], *_live_cursors()))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _live_origin_ok():
+    """Only accept sockets opened by this site's own pages."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True  # non-browser clients send none; they still need a signed-in session
+    # Behind a proxy the app may see an internal host name, so also accept the public
+    # address the proxy forwards and the one configured for Google sign-in.
+    allowed = {request.host, request.headers.get("X-Forwarded-Host", ""),
+               urlsplit(os.environ.get("GOOGLE_REDIRECT_URI", "")).netloc}
+    return urlsplit(origin).netloc in allowed - {""}
+
+
+def live_socket(ws):
+    global _live_sockets
+    user = current_user()
+    # The socket outlives a normal request, so release the per-request database connection now.
+    request_db = g.pop("db", None)
+    if request_db is not None:
+        request_db.close()
+    if not user or not _live_origin_ok():
+        ws.close(1008)
+        return
+    # A server that handles one request at a time per process would be frozen by an open
+    # socket. Closing with 1013 ("try again later") tells the page to ask periodically instead.
+    if os.environ.get("REALTIME", "auto").strip().lower() == "off" or not request.environ.get("wsgi.multithread"):
+        ws.close(1013)
+        return
+    with _live_lock:
+        if _live_sockets >= LIVE_MAX_SOCKETS:
+            ws.close(1013)
+            return
+        _live_sockets += 1
+
+    user_id = user["id"]
+    chat_after, note_after = _live_cursors()
+    connection = sqlite3.connect(DB_PATH, timeout=5)
+    try:
+        sent, seen_version, checked = None, -1, 0.0
+        while True:
+            now = time_module.monotonic()
+            if _live_version != seen_version or now - checked >= LIVE_CHECK_SECONDS:
+                seen_version, checked = _live_version, now
+                state = _live_state(connection, user_id, chat_after, note_after)
+                fingerprint = (state["chat"], state["tasks"], state["chat_cursor"], state["note_cursor"])
+                if fingerprint != sent:
+                    sent = fingerprint
+                    chat_after, note_after = state["chat_cursor"], state["note_cursor"]
+                    ws.send(json.dumps(state))
+            # This is the wait between checks. It raises ConnectionClosed as soon as the
+            # tab closes, so finished sockets are cleaned up straight away.
+            ws.receive(timeout=LIVE_WAKE_SECONDS)
+    except ConnectionClosed:
+        pass
+    finally:
+        connection.close()
+        with _live_lock:
+            _live_sockets -= 1
+
+
+if sock:
+    sock.route("/live/socket")(live_socket)
+
+
 @app.get("/favicon.ico")
 def favicon():
     return send_file(os.path.join(app.static_folder, "favicon.ico"), mimetype="image/x-icon", max_age=86400)
@@ -4078,7 +4261,9 @@ def favicon():
 
 @app.context_processor
 def inject_globals():
-    return {"today": today_str(), "current_user": current_user()}
+    user = current_user()
+    counts = _live_counts(get_db(), user["id"]) if user else {"chat": 0, "tasks": 0, "all": 0}
+    return {"today": today_str(), "current_user": user, "live_counts": counts, "live_socket_enabled": bool(sock)}
 
 
 @app.template_filter("slug")

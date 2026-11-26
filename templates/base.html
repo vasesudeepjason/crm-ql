@@ -26,10 +26,12 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=26" data-turbo-track="reload">
 <link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}?v=5" data-turbo-track="reload">
 <link rel="stylesheet" href="{{ url_for('static', filename='interface.css') }}?v=16" data-turbo-track="reload">
+<link rel="stylesheet" href="{{ url_for('static', filename='live.css') }}?v=1" data-turbo-track="reload">
 {% block page_styles %}{% endblock %}
 <script src="{{ url_for('static', filename='vendor/turbo-8.0.23/turbo.es2017-esm.js') }}" type="module" data-turbo-track="reload"></script>
 <script src="{{ url_for('static', filename='navigation.js') }}?v=3" defer data-turbo-track="reload"></script>
 <script src="{{ url_for('static', filename='reminder-notice.js') }}?v=2" defer></script>
+<script src="{{ url_for('static', filename='live.js') }}?v=2" defer data-turbo-track="reload"></script>
 </head>
 <body>
 <div class="shell crm-shell">
@@ -38,6 +40,7 @@
       <span class="menu-toggle-bar"></span>
       <span class="menu-toggle-bar"></span>
       <span class="menu-toggle-bar"></span>
+      <span class="live-badge is-rail" data-live-badge="all" aria-label="{{ live_counts.all }} unread"{% if not live_counts.all %} hidden{% endif %}>{{ live_counts.all }}</span>
     </button>
     <span class="mobile-topbar-title">Lead Desk</span>
     <a href="{{ url_for('add_lead') }}" class="mobile-topbar-add" aria-label="Add lead">+</a>
@@ -61,6 +64,9 @@
     {% block content %}{% endblock %}
   </main>
 </div>
+<div id="live-toasts" class="live-toasts" data-turbo-permanent role="region" aria-label="Notifications" aria-live="polite"
+     data-user="{{ current_user.id }}" data-state-url="{{ url_for('live_state') }}" data-socket-url="{{ '/live/socket' if live_socket_enabled else '' }}"
+     data-chat-url="{{ url_for('chat') }}" data-task-url="{{ url_for('tasks_list') }}"></div>
 
 </body>
 </html>
