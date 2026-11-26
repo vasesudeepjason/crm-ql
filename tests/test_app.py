@@ -463,5 +463,26 @@ class FileFolders(PageTest):
         self.assertFalse(os.path.exists(os.path.join(os.environ["TASK_FILE_DIR"], "Legacy Project")))
 
 
+class ClientReport(PageTest):
+    def test_the_report_is_a_pdf_for_people_who_can_see_the_project(self):
+        owner, outsider = make_user("manager"), make_user("telecaller")
+        project = make_project(owner, name="Report: Site / Build", start_date="2026-01-05", target_date="2026-03-01")
+        parent = make_task(owner, "Design", project_id=project, start_date="2026-01-05", due_date="2026-01-20", status="Complete")
+        make_task(owner, "Mockups", project_id=project, parent_id=parent, due_date="2026-01-12")
+        make_task(owner, "Unscheduled हिंदी task", project_id=project)
+        response = Session(owner).get(f"/projects/{project}/report.pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF-"))
+        self.assertIn("Report-Site-Build-report-", response.headers["Content-Disposition"])
+        self.assertIn(f"/projects/{project}/report.pdf", Session(owner).get(f"/projects/{project}").get_data(as_text=True))
+        self.assertEqual(Session(outsider).get(f"/projects/{project}/report.pdf").status_code, 302)
+
+    def test_a_project_with_no_tasks_still_exports(self):
+        owner = make_user("manager")
+        response = Session(owner).get(f"/projects/{make_project(owner)}/report.pdf")
+        self.assertTrue(response.data.startswith(b"%PDF-"))
+
+
 if __name__ == "__main__":
     unittest.main()

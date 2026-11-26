@@ -39,6 +39,7 @@ except ImportError:  # Without it the app still runs; pages ask for updates ever
     ConnectionClosed = Exception
 
 from invoice_pdf import build_invoice_pdf
+from project_report_pdf import build_project_report_pdf
 
 DB_PATH = "leads.db"
 ROLES = ["telecaller", "field_sales", "manager"]
@@ -2499,6 +2500,32 @@ def project_detail(project_id):
     response.cache_control.no_store = True
     response.status_code = 409 if conflict else 200
     return response
+
+
+@app.get("/projects/<int:project_id>/report.pdf")
+@login_required
+def project_report(project_id):
+    """A PDF for the client: progress numbers, a Gantt chart and the task list. No budget, time or invoices."""
+    db, user = get_db(), current_user()
+    project = _project_detail_row(db, project_id, user)
+    if not project:
+        flash("Project not found, or it is not assigned to you.", "error")
+        return redirect(url_for("projects_list"))
+    tasks = []
+    for task in sorted(_project_task_views(db, project_id), key=lambda item: (item["start_date"] or item["due_date"] or "9999", item["id"])):
+        for level, item in [(0, task), *((1, sub) for sub in task["subtasks"])]:
+            tasks.append({"title": item["title"], "status": item["status"], "start": item["start_date"], "due": item["due_date"],
+                          "level": level, "assignees": [person["name"] for person in item["assignees"]]})
+    settings = _invoice_settings(db)
+    pdf = build_project_report_pdf(
+        {"name": settings["name"] if settings else "", "website": settings["website"] if settings else ""},
+        {"name": project["name"], "client": project["company_name"], "type": project["project_type"], "status": project["status"],
+         "start": project["start_date"], "target": project["target_date"], "manager": project["project_manager_name"],
+         "description": project["description"]},
+        tasks, logo_path=os.path.join(app.static_folder, "logo.png"))
+    log_activity("Exported project report", "project", project_id, project["name"])
+    safe = re.sub(r"[^A-Za-z0-9]+", "-", project["name"]).strip("-") or "project"
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=f"{safe}-report-{date.today().isoformat()}.pdf")
 
 
 @app.route("/projects/<int:project_id>/edit", methods=["GET", "POST"])
