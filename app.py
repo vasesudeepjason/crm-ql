@@ -2559,6 +2559,8 @@ def project_edit(project_id):
                 db.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, uid))
             log_project_event(db, project_id, "Project edited", "Changed: " + ", ".join(changed))
             db.commit()
+            if "name" in changed:
+                _file_task_files(db, [row["id"] for row in db.execute("SELECT id FROM work_tasks WHERE project_id=?", (project_id,))])
             log_activity("Edited project", "project", project_id, name, ", ".join(changed))
             flash("Project updated.", "success")
         return redirect(url_for("project_detail", project_id=project_id))
@@ -4327,8 +4329,9 @@ def _task_time_view(db, task_id, user):
 
 
 # ---- task attachments and links ----
-# Files are kept outside the code folder (instance/task_files, or TASK_FILE_DIR) under a
-# random name; the name the person uploaded is only stored in the database.
+# Files are kept outside the code folder (instance/task_files, or TASK_FILE_DIR) in
+# Project name/Task name/ folders (a subtask's folder sits inside its parent task's), under the
+# name they were uploaded with. stored_name is that path relative to the folder, with "/".
 TASK_FILE_TYPES = {
     ".png": ("image/png", "Image"), ".jpg": ("image/jpeg", "Image"), ".jpeg": ("image/jpeg", "Image"),
     ".webp": ("image/webp", "Image"), ".gif": ("image/gif", "Image"),
@@ -4401,14 +4404,112 @@ def _task_file_views(db, task, user):
     return files
 
 
+_FOLDER_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_FOLDER_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+
+
+def _folder_name(text, fallback, limit=40):
+    """A name that is safe as one folder or file-name part on Windows and Linux."""
+    name = re.sub(r"\s+", " ", _FOLDER_UNSAFE.sub(" ", text or "")).strip(" .")[:limit].strip(" .")
+    return fallback if not name or name.upper() in _FOLDER_RESERVED else name
+
+
+def _task_folder(db, task):
+    """Where a task's attachments live, relative to the attachments folder."""
+    project = db.execute("SELECT name FROM projects WHERE id=?", (task["project_id"],)).fetchone() if task["project_id"] else None
+    parts = [_folder_name(project["name"] if project else "", "No project")]
+    if task["parent_id"]:
+        parent = db.execute("SELECT title FROM work_tasks WHERE id=?", (task["parent_id"],)).fetchone()
+        if parent:
+            parts.append(_folder_name(parent["title"], f"Task {task['parent_id']}"))
+    parts.append(_folder_name(task["title"], f"Task {task['id']}"))
+    return "/".join(parts)
+
+
+def _task_file_path(stored_name):
+    """Full path of a stored attachment, or None when the name would leave the attachments folder."""
+    base = os.path.realpath(_task_file_dir())
+    path = os.path.realpath(os.path.join(base, *stored_name.split("/")))
+    return path if path.startswith(base + os.sep) else None
+
+
+def _free_stored_name(db, folder, original_name, extension, own_id=None):
+    """A stored name in the folder that no other attachment, and no file on disk, already has."""
+    stem = _folder_name(os.path.splitext(original_name)[0], "file", limit=60)
+    for count in range(1, 1000):
+        stored = f"{folder}/{stem}{'' if count == 1 else f' ({count})'}{extension}"
+        taken = db.execute("SELECT 1 FROM work_task_files WHERE stored_name=? COLLATE NOCASE AND id IS NOT ?",
+                           (stored, own_id)).fetchone()
+        path = _task_file_path(stored)
+        if not taken and path and not os.path.exists(path):
+            return stored
+    return f"{folder}/{uuid.uuid4().hex}{extension}"
+
+
+def _prune_task_folders(folder):
+    """Remove the folder, and the folders above it, while they are empty."""
+    base = os.path.realpath(_task_file_dir())
+    folder = os.path.realpath(folder)
+    while folder.startswith(base + os.sep):
+        try:
+            os.rmdir(folder)
+        except OSError:
+            return
+        folder = os.path.dirname(folder)
+
+
+def _file_task_files(db, task_ids=None):
+    """Move attachments into their task's folder: after a rename, a move to another project, or an upgrade.
+
+    Safe to repeat. A file that cannot be moved (already gone, path too long) stays where it is.
+    """
+    query, params = """SELECT f.id AS file_id, f.original_name, f.stored_name, t.id, t.title, t.project_id, t.parent_id
+                       FROM work_task_files f JOIN work_tasks t ON t.id = f.task_id""", ()
+    if task_ids is not None:
+        task_ids = list(task_ids)
+        if not task_ids:
+            return
+        query, params = query + f" WHERE t.id IN ({','.join('?' * len(task_ids))})", task_ids
+    for row in db.execute(query + " ORDER BY f.id", params).fetchall():
+        folder = _task_folder(db, row)
+        if row["stored_name"].rpartition("/")[0] == folder:
+            continue
+        old = _task_file_path(row["stored_name"])
+        if not old or not os.path.isfile(old):
+            continue
+        stored = _free_stored_name(db, folder, row["original_name"], os.path.splitext(row["stored_name"])[1].lower(), row["file_id"])
+        new = _task_file_path(stored)
+        try:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.replace(old, new)
+        except OSError:
+            continue
+        db.execute("UPDATE work_task_files SET stored_name=? WHERE id=?", (stored, row["file_id"]))
+        db.commit()   # the row must not point at the old place once the file has moved
+        _prune_task_folders(os.path.dirname(old))
+
+
+def _refile_task_files():
+    """At start-up, move attachments saved by older versions (flat, random names) into folders."""
+    db = sqlite3.connect(DB_PATH, timeout=120)
+    db.row_factory = sqlite3.Row
+    try:
+        _file_task_files(db)
+    finally:
+        db.close()
+
+
 def _remove_task_files(stored_names):
     """Delete stored attachment files from disk. Missing files are ignored."""
-    folder = _task_file_dir()
     for name in stored_names:
+        path = _task_file_path(name)
+        if not path:
+            continue
         try:
-            os.remove(os.path.join(folder, name))
+            os.remove(path)
         except OSError:
             pass
+        _prune_task_folders(os.path.dirname(path))
 
 
 def _task_token():
@@ -5064,9 +5165,8 @@ def task_detail(task_id):
 def task_file_upload(task_id):
     _check_task_token()
     db, user = get_db(), current_user()
-    _get_work_task(db, task_id)
-    folder = _task_file_dir()
-    os.makedirs(folder, exist_ok=True)
+    task = _get_work_task(db, task_id)
+    folder = _task_folder(db, task)
     have = db.execute("SELECT count(*) FROM work_task_files WHERE task_id=?", (task_id,)).fetchone()[0]
     saved, problems = [], []
     for upload in request.files.getlist("files"):
@@ -5087,9 +5187,15 @@ def task_file_upload(task_id):
         if len(data) > TASK_FILE_MAX_BYTES:
             problems.append(f"{name}: files can be up to {TASK_FILE_MAX_BYTES // (1024 * 1024)} MB.")
             continue
-        stored = uuid.uuid4().hex + extension
-        with open(os.path.join(folder, stored), "wb") as handle:
-            handle.write(data)
+        stored = _free_stored_name(db, folder, name, extension)
+        path = _task_file_path(stored)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as handle:
+                handle.write(data)
+        except OSError:
+            problems.append(f"{name}: the file could not be saved.")
+            continue
         db.execute(
             "INSERT INTO work_task_files (task_id,user_id,original_name,stored_name,size,created_at) VALUES (?,?,?,?,?,?)",
             (task_id, user["id"], name, stored, len(data), now_str()))
@@ -5113,8 +5219,8 @@ def task_file(file_id):
     if not row:
         abort(404)
     _get_work_task(db, row["task_id"])
-    path = os.path.join(_task_file_dir(), row["stored_name"])
-    if not os.path.isfile(path):
+    path = _task_file_path(row["stored_name"])
+    if not path or not os.path.isfile(path):
         abort(404)
     extension = os.path.splitext(row["stored_name"])[1].lower()
     mime, kind = TASK_FILE_TYPES.get(extension, ("application/octet-stream", "File"))
@@ -5296,6 +5402,8 @@ def task_update(task_id):
     )
     _set_task_status(db, task, status)
     db.commit()
+    # A new title or project means a new folder for this task's files and its subtasks' files.
+    _file_task_files(db, [row["id"] for row in db.execute("SELECT id FROM work_tasks WHERE id=? OR parent_id=?", (task_id, task_id))])
     _live_touch()
     return here
 
@@ -5793,6 +5901,8 @@ def slug_filter(value):
 
 if __name__ == "__main__":
     init_db()
+    _refile_task_files()
     app.run(host="0.0.0.0", port=5000, debug=True)
 else:
     init_db()
+    _refile_task_files()

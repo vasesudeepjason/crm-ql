@@ -6,6 +6,7 @@ Run from the crm-ql folder:
 
 They use a brand-new database in a temporary folder, never leads.db.
 """
+import io
 import os
 import sqlite3
 import sys
@@ -391,6 +392,64 @@ class Links(PageTest):
                          ["https://example.com/page"])
         me.post(f"/tasks/{task}/update", {"title": "T", "status": "To Do", "description": "see https://ignored.example.com"})
         self.assertEqual(len(query("SELECT 1 FROM work_task_links WHERE task_id=?", (task,))), 1)
+
+
+class FileFolders(PageTest):
+    """Attachments are kept on disk as Project name/Task name/file name."""
+
+    def stored(self, task):
+        return [row["stored_name"] for row in query("SELECT stored_name FROM work_task_files WHERE task_id=? ORDER BY id", (task,))]
+
+    def on_disk(self, stored):
+        return os.path.isfile(os.path.join(os.environ["TASK_FILE_DIR"], *stored.split("/")))
+
+    def attach(self, me, task, name, body=b"hello"):
+        return me.post(f"/tasks/{task}/files", {"files": (io.BytesIO(body), name)})
+
+    def test_a_file_is_saved_under_its_project_and_task(self):
+        user = make_user("manager")
+        me, project = Session(user), make_project(user, name="Folders: Alpha?")
+        task = make_task(user, "Design / review", project_id=project)
+        self.attach(me, task, "brief.txt")
+        self.attach(me, task, "brief.txt", b"second")
+        self.assertEqual(self.stored(task), ["Folders Alpha/Design review/brief.txt", "Folders Alpha/Design review/brief (2).txt"])
+        self.assertTrue(all(self.on_disk(name) for name in self.stored(task)))
+        file_id = query("SELECT id FROM work_task_files WHERE task_id=? ORDER BY id", (task,))[1]["id"]
+        self.assertEqual(me.get(f"/tasks/files/{file_id}?download").data, b"second")
+
+    def test_a_task_without_a_project_and_a_subtask(self):
+        user = make_user("manager")
+        me, parent = Session(user), make_task(user, "Loose parent")
+        child = make_task(user, "Child step", parent_id=parent)
+        self.attach(me, parent, "a.txt")
+        self.attach(me, child, "b.txt")
+        self.assertEqual(self.stored(parent), ["No project/Loose parent/a.txt"])
+        self.assertEqual(self.stored(child), ["No project/Loose parent/Child step/b.txt"])
+
+    def test_folders_follow_a_rename_and_a_move_to_another_project(self):
+        user = make_user("manager")
+        me, first, second = Session(user), make_project(user, name="Move From"), make_project(user, name="Move To")
+        task = make_task(user, "Old title", project_id=first)
+        self.attach(me, task, "notes.txt")
+        me.post(f"/tasks/{task}/update", {"title": "New title", "status": "To Do", "project_id": second})
+        self.assertEqual(self.stored(task), ["Move To/New title/notes.txt"])
+        self.assertTrue(self.on_disk("Move To/New title/notes.txt"))
+        self.assertFalse(os.path.exists(os.path.join(os.environ["TASK_FILE_DIR"], "Move From")))
+
+    def test_old_flat_files_are_moved_and_deleting_cleans_up(self):
+        user = make_user("manager")
+        me, project = Session(user), make_project(user, name="Legacy Project")
+        task = make_task(user, "Legacy task", project_id=project)
+        os.makedirs(os.environ["TASK_FILE_DIR"], exist_ok=True)
+        with open(os.path.join(os.environ["TASK_FILE_DIR"], "0123abcd.pdf"), "wb") as handle:
+            handle.write(b"%PDF-")
+        insert("INSERT INTO work_task_files (task_id,user_id,original_name,stored_name,size,created_at) VALUES (?,?,?,?,?,?)",
+               (task, user, "Quote v2.pdf", "0123abcd.pdf", 5, "2026-01-01 00:00:00"))
+        crm._refile_task_files()
+        self.assertEqual(self.stored(task), ["Legacy Project/Legacy task/Quote v2.pdf"])
+        self.assertTrue(self.on_disk("Legacy Project/Legacy task/Quote v2.pdf"))
+        me.post(f"/tasks/{task}/delete")
+        self.assertFalse(os.path.exists(os.path.join(os.environ["TASK_FILE_DIR"], "Legacy Project")))
 
 
 if __name__ == "__main__":
