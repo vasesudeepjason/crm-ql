@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block title %}New Project · Lead Desk{% endblock %}
 {% block content %}
-<div class="page-header"><div><h1 class="page-title">Create project</h1><p class="page-sub">Link it to a won lead, or leave the lead blank for internal work.</p></div><a class="btn btn-outline" href="{{ url_for('projects_list') }}">Cancel</a></div>
+<div class="page-header"><div><h1 class="page-title">Create project</h1><p class="page-sub">Say who the work is for and what kind of work it is. Leave the client as internal for our own projects.</p></div><a class="btn btn-outline" href="{{ url_for('projects_list') }}">Cancel</a></div>
 <form method="post" class="form-card project-form">
   <div class="form-section"><h2 class="section-title">Project details</h2>
     <div class="form-grid">
       <div class="form-group"><label>Project name *</label><input name="name" required placeholder="e.g. Acme website redesign"></div>
-      <div class="form-group"><label>CRM lead (optional)</label><select name="lead_id"><option value="">Independent project</option>{% for lead in won_leads %}<option value="{{ lead.id }}" {% if selected_lead_id == lead.id %}selected{% endif %}>{{ lead.company_name or 'No company' }} · {{ lead.name }}</option>{% endfor %}</select></div>
+      <div class="form-group"><label for="project-type">Project type *</label><select id="project-type" name="project_type" required><option value="">Choose a type</option>{% for type in project_types %}<option>{{ type }}</option>{% endfor %}</select></div>
+      <div class="form-group"><label for="project-client">Client company</label><select id="project-client" name="company_id"><option value="">Internal project (no client)</option>{% for company in companies %}<option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>{% endfor %}</select></div>
+      <div class="form-group"><label for="project-lead">CRM lead (optional)</label><select id="project-lead" name="lead_id"><option value="">No linked lead</option>{% for lead in won_leads %}<option value="{{ lead.id }}" data-company="{{ lead.company_id or '' }}" {% if selected_lead_id == lead.id %}selected{% endif %}>{{ lead.company_name or 'No company' }} · {{ lead.name }}</option>{% endfor %}</select><small class="form-hint">A won lead sets the client to its company.</small></div>
       <div class="form-group"><label>Assigned to / project owner *</label><select name="project_manager_id" required>{% for person in team_users %}<option value="{{ person.id }}" {% if person.id == current_user.id %}selected{% endif %}>{{ person.name }} · {{ person.role }}</option>{% endfor %}</select></div>
       <div class="form-group"><label>Status</label><select name="status">{% for status in statuses %}<option>{{ status }}</option>{% endfor %}</select></div>
       <div class="form-group"><label>Priority</label><select name="priority">{% for priority in priorities %}<option {% if priority == 'Medium' %}selected{% endif %}>{{ priority }}</option>{% endfor %}</select></div>
@@ -21,4 +23,13 @@
   </div>
   <button class="btn btn-accent">Create project</button>
 </form>
+<script>
+(() => {
+  const lead = document.getElementById('project-lead'), client = document.getElementById('project-client');
+  lead.addEventListener('change', () => {
+    const company = lead.selectedOptions[0].dataset.company;
+    if (company) client.value = company;
+  });
+})();
+</script>
 {% endblock %}

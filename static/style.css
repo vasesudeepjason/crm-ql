@@ -2307,7 +2307,11 @@ body {
 .project-card:hover { transform: translateY(-3px); border-color: rgba(240, 88, 94, .6); box-shadow: var(--panel-shadow-hover), 0 12px 28px rgba(159, 21, 28, .1); }
 .project-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .project-card h2 { margin: 18px 0 4px; font-family: var(--font-display); font-size: 18px; line-height: 1.3; }
-.project-client { min-height: 20px; margin: 0; color: var(--text-soft); font-size: 13px; }
+.project-client { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-height: 20px; margin: 0; color: var(--text-soft); font-size: 13px; }
+.project-client > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.project-type { flex: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-soft); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.project-status-form .form-group { margin-bottom: 10px; }
+.form-hint { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
 .project-status, .priority { display: inline-flex; align-items: center; width: max-content; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .project-status { background: rgba(255,255,255,.07); color: var(--text-soft); border: 1px solid rgba(255,255,255,.07); }
 .status-Planning { color: #b8bfdb; background: rgba(148,151,181,.13); }
@@ -2332,11 +2336,11 @@ body {
 .project-detail-grid aside { display: grid; gap: 16px; }
 .project-overview { margin-bottom: 26px; }
 .project-description { margin: 0 0 20px; color: var(--text-soft); white-space: pre-wrap; line-height: 1.6; }
-.project-info-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.project-info-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
 .project-info-grid > div { padding: 11px; border: 1px solid rgba(255,255,255,.055); border-radius: 9px; background: rgba(255,255,255,.025); }
 .project-info-grid span, .project-info-grid strong { display: block; }
 .project-info-grid span { color: var(--text-faint); font-size: 11px; }
-.project-info-grid strong { margin-top: 5px; color: var(--text); font-size: 13px; }
+.project-info-grid strong { margin-top: 5px; color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
 .project-linked-record { display: inline-block; margin-top: 16px; color: #ff7479; font-size: 13px; font-weight: 600; }
 .task-list { overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-gradient); box-shadow: var(--panel-shadow); }
 .task-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border-bottom: 1px solid var(--border); }

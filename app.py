@@ -83,6 +83,7 @@ PRIORITIES = ["High", "Medium", "Low"]
 BUDGET_RANGES = ["Under 25k", "25k-50k", "50k-1L", "1L-2L", "2L-5L", "5L+"]
 COMPANY_STATUSES = ["Prospect", "Customer", "Inactive"]
 PROJECT_STATUSES = ["Planning", "In Progress", "On Hold", "Client Review", "Completed", "Cancelled"]
+PROJECT_TYPES = ["Website", "SEO", "Ads", "Custom Web App", "Other IT Services"]
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
@@ -606,6 +607,8 @@ def _init_schema(db):
     db.execute("CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee ON project_tasks(assignee_id, status, due_date)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)")
     _add_cols(db, "project_tasks", [("start_date", "TEXT")])
+    # company_id is the client the work is for; NULL means an internal project.
+    _add_cols(db, "projects", [("project_type", "TEXT")])
     _init_work_tasks(db)
     db.execute("""CREATE TABLE IF NOT EXISTS personal_reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2206,8 +2209,12 @@ def project_new():
         lead_id = request.form.get("lead_id", type=int)
         manager_id = request.form.get("project_manager_id", type=int)
         status, priority = request.form.get("status", "Planning"), request.form.get("priority", "Medium")
+        project_type = request.form.get("project_type", "")
         if not name or not manager_id or status not in PROJECT_STATUSES or priority not in PRIORITIES:
             flash("Enter a project name, owner, valid status and priority.", "error")
+            return redirect(url_for("project_new", lead_id=lead_id or ""))
+        if project_type not in PROJECT_TYPES:
+            flash("Choose a project type.", "error")
             return redirect(url_for("project_new", lead_id=lead_id or ""))
         if not db.execute("SELECT id FROM users WHERE id=?", (manager_id,)).fetchone():
             flash("Choose a valid project owner.", "error")
@@ -2218,6 +2225,13 @@ def project_new():
             if not lead or lead["stage"] != "Won":
                 flash("Projects can only be linked to a won lead.", "error")
                 return redirect(url_for("project_new"))
+        # A won lead decides the client; otherwise the manager picks one, or leaves it internal.
+        company_id = request.form.get("company_id", type=int)
+        if lead and lead["company_id"]:
+            company_id = lead["company_id"]
+        elif company_id and not db.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
+            flash("Choose a valid client company.", "error")
+            return redirect(url_for("project_new", lead_id=lead_id or ""))
         try:
             budget_raw = request.form.get("budget", "").strip()
             budget = float(budget_raw) if budget_raw else None
@@ -2226,9 +2240,9 @@ def project_new():
             return redirect(url_for("project_new", lead_id=lead_id or ""))
         now = now_str()
         cursor = db.execute("""INSERT INTO projects
-            (name,lead_id,company_id,project_manager_id,status,priority,start_date,target_date,budget,description,created_by,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (name, lead_id or None, lead["company_id"] if lead else None, manager_id, status, priority,
+            (name,lead_id,company_id,project_type,project_manager_id,status,priority,start_date,target_date,budget,description,created_by,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (name, lead_id or None, company_id or None, project_type, manager_id, status, priority,
              request.form.get("start_date") or None, request.form.get("target_date") or None, budget,
              request.form.get("description", "").strip(), user["id"], now, now))
         project_id = cursor.lastrowid
@@ -2245,7 +2259,12 @@ def project_new():
         flash("Project created and team assigned.", "success")
         return redirect(url_for("project_detail", project_id=project_id))
     return render_template("project_form.html", won_leads=won_leads, team_users=team_users,
+        companies=_project_client_options(db), project_types=PROJECT_TYPES,
         statuses=PROJECT_STATUSES, priorities=PRIORITIES, selected_lead_id=selected_lead_id)
+
+
+def _project_client_options(db):
+    return db.execute("SELECT id,name FROM companies ORDER BY name COLLATE NOCASE").fetchall()
 
 
 def _project_detail_row(db, project_id, user):
@@ -2309,6 +2328,7 @@ def project_detail(project_id):
     response = app.make_response(render_template("project_detail.html", project=project, members=members, tasks=tasks, activities=activities,
         assigned=assigned, note=note, note_draft=draft, note_conflict=conflict,
         users=all_users, can_manage=can_manage_project(user, project),
+        companies=_project_client_options(db) if can_manage_project(user, project) else [], project_types=PROJECT_TYPES,
         statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(), here=request.path,
         task_projects=[{"id": project["id"], "name": project["name"]}], project_filter=project["id"],
         task_total=len(every_task), completed_count=sum(1 for task in every_task if task["status"] == "Complete")))
@@ -2331,6 +2351,35 @@ def project_update_status(project_id):
         db.execute("UPDATE projects SET status=?,updated_at=? WHERE id=?", (status, now_str(), project_id))
         log_project_event(db, project_id, "Project status updated", f"{project['status']} → {status}")
         db.commit(); log_activity("Updated project status", "project", project_id, project["name"], status)
+    return redirect(url_for("project_detail", project_id=project_id))
+
+
+@app.route("/projects/<int:project_id>/attribution", methods=["POST"])
+@login_required
+def project_update_attribution(project_id):
+    """Set who the project is for (a client company, or internal) and what kind of work it is."""
+    _check_task_token()
+    db = get_db(); user = current_user(); project = _project_detail_row(db, project_id, user)
+    if not project or not can_manage_project(user, project):
+        flash("Only the project owner or a manager can update this project.", "error")
+        return redirect(url_for("projects_list"))
+    company_id = request.form.get("company_id", type=int) or None
+    project_type = request.form.get("project_type", "")
+    company = db.execute("SELECT id,name FROM companies WHERE id=?", (company_id,)).fetchone() if company_id else None
+    if (company_id and not company) or project_type not in PROJECT_TYPES:
+        flash("Choose a valid client and project type.", "error")
+        return redirect(url_for("project_detail", project_id=project_id))
+    changes = []
+    if company_id != project["company_id"]:
+        changes.append(f"Client: {project['company_name'] or 'Internal'} → {company['name'] if company else 'Internal'}")
+    if project_type != project["project_type"]:
+        changes.append(f"Type: {project['project_type'] or 'Not set'} → {project_type}")
+    if changes:
+        db.execute("UPDATE projects SET company_id=?,project_type=?,updated_at=? WHERE id=?",
+                   (company_id, project_type, now_str(), project_id))
+        log_project_event(db, project_id, "Project details updated", "; ".join(changes))
+        db.commit(); log_activity("Updated project details", "project", project_id, project["name"], "; ".join(changes))
+        flash("Project details updated.", "success")
     return redirect(url_for("project_detail", project_id=project_id))
 
 
