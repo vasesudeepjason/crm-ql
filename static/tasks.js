@@ -81,8 +81,70 @@
 
   // Save the task form as soon as a field changes.
   document.addEventListener('change', function (event) {
+    if (event.target.matches('.tk-attach-input')) {
+      uploadFiles(event.target.closest('.tk-panel'), event.target.files);
+      event.target.value = '';
+      return;
+    }
     var form = event.target.closest('form[data-autosave]');
     if (form && form.reportValidity()) form.requestSubmit();
+  });
+
+  // ---- attachments: the Attach button, dropping files on the task, pasting into the description ----
+  var uploading = false;
+  function uploadFiles(panel, fileList) {
+    var form = panel && panel.querySelector('[data-task-upload]');
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!form || !files.length || uploading) return;
+    var status = panel.querySelector('[data-upload-status]');
+    var data = new FormData();
+    data.append('token', form.elements.token.value);
+    files.forEach(function (file) { data.append('files', file, file.name || 'pasted-image.png'); });
+    uploading = true;
+    if (status) { status.classList.remove('is-error'); status.textContent = 'Uploading ' + files.length + (files.length === 1 ? ' file…' : ' files…'); }
+    fetch(form.action, { method: 'POST', body: data, credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (response) {
+        if (response.status === 413) throw new Error('That upload is too large. Add fewer or smaller files.');
+        if (!response.ok || response.redirected) throw new Error('The upload could not be saved. Try again.');
+        // Saving the task form reloads the panel with the new attachments and keeps any
+        // description text that has not been saved yet.
+        var main = panel.querySelector('form[data-autosave]');
+        if (main && main.reportValidity()) main.requestSubmit();
+      })
+      .catch(function (error) {
+        if (status) { status.classList.add('is-error'); status.textContent = error.message; }
+      })
+      .then(function () { uploading = false; });
+  }
+
+  function hasFiles(event) {
+    var types = event.dataTransfer && event.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+  }
+  document.addEventListener('dragover', function (event) {
+    var main = hasFiles(event) && event.target.closest && event.target.closest('.tk-panel-main');
+    if (!main || !main.querySelector('[data-task-upload]')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    main.classList.add('is-dropping');
+  });
+  document.addEventListener('dragleave', function (event) {
+    var main = event.target.closest && event.target.closest('.tk-panel-main');
+    if (main && !main.contains(event.relatedTarget)) main.classList.remove('is-dropping');
+  });
+  document.addEventListener('drop', function (event) {
+    var main = hasFiles(event) && event.target.closest && event.target.closest('.tk-panel-main');
+    if (!main || !main.querySelector('[data-task-upload]')) return;
+    event.preventDefault();
+    main.classList.remove('is-dropping');
+    uploadFiles(main.closest('.tk-panel'), event.dataTransfer.files);
+  });
+  document.addEventListener('paste', function (event) {
+    var box = event.target.closest && event.target.closest('.tk-description textarea');
+    var files = event.clipboardData && event.clipboardData.files;
+    if (!box || !files || !files.length) return;
+    event.preventDefault();
+    uploadFiles(box.closest('.tk-panel'), files);
   });
 
   document.addEventListener('submit', function (event) {
@@ -187,6 +249,236 @@
       .catch(function () { window.alert('That move could not be saved. The board will reload.'); })
       .then(refreshList);
   }
+
+  // ---- time tracking: keep every running clock on the page ticking ----
+  var clockStart = new WeakMap();
+  function tickClocks() {
+    document.querySelectorAll('[data-timer-elapsed]').forEach(function (el) {
+      if (!clockStart.has(el)) clockStart.set(el, Date.now() - Number(el.dataset.timerElapsed) * 1000);
+      var total = Math.floor((Date.now() - clockStart.get(el)) / 1000);
+      var minutes = Math.floor(total % 3600 / 60), seconds = total % 60;
+      el.textContent = Math.floor(total / 3600) + ':' + (minutes < 10 ? '0' : '') + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+    });
+  }
+  setInterval(tickClocks, 1000);
+
+  // ---- Gantt: open on today, and come back to where you were after a reload ----
+  var ganttLeft = {};
+  function ganttToday(scroller, smooth) {
+    var side = scroller.querySelector('.tk-gantt-side');
+    var sideWidth = side ? side.offsetWidth : 0;
+    var left = Number(scroller.dataset.today) * Number(scroller.dataset.day) - (scroller.clientWidth - sideWidth) / 3;
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scroller.scrollTo({ left: Math.max(0, left), behavior: smooth && !calm ? 'smooth' : 'auto' });
+  }
+  function placeGantt() {
+    var scroller = document.querySelector('[data-gantt-scroll]');
+    if (!scroller || scroller.dataset.placed) return;
+    scroller.dataset.placed = '1';
+    var key = location.pathname + location.search;
+    if (ganttLeft[key] != null) scroller.scrollLeft = ganttLeft[key];
+    else ganttToday(scroller, false);
+    scroller.addEventListener('scroll', function () { ganttLeft[key] = scroller.scrollLeft; }, { passive: true });
+  }
+  document.addEventListener('click', function (event) {
+    var jump = event.target.closest('[data-gantt-today]');
+    var scroller = jump && document.querySelector('[data-gantt-scroll]');
+    if (!scroller) return;
+    event.preventDefault();
+    ganttToday(scroller, true);
+  });
+  document.addEventListener('turbo:load', placeGantt);
+  placeGantt();
+
+  // ---- Gantt: drag a bar to move it, drag an end to resize it, click or drag an empty row to schedule ----
+  var drag = null, swallowClick = false, ganttTip = null, ganttGhost = null, lastX = 0, edgeFrame = 0;
+  function isoAdd(first, days) {
+    var day = new Date(first + 'T00:00:00Z');
+    day.setUTCDate(day.getUTCDate() + days);
+    return day.toISOString().slice(0, 10);
+  }
+  function dayLabel(first, days) {
+    return new Date(isoAdd(first, days) + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+  function rangeLabel(first, s, n) {
+    return n === 1 ? dayLabel(first, s) : dayLabel(first, s) + ' – ' + dayLabel(first, s + n - 1) + ' · ' + n + ' days';
+  }
+  function clamp(value, low, high) { return Math.max(low, Math.min(high, value)); }
+  // Which day of the timeline is under this x position. Measured from the track as it
+  // is right now, so scrolling and page zoom never throw it off.
+  function dayAt(track, x) {
+    var days = Number(track.closest('[data-gantt-scroll]').dataset.days);
+    var box = track.getBoundingClientRect();
+    return clamp(Math.floor((x - box.left) / (box.width / days)), 0, days - 1);
+  }
+  function showTip(track, text, afterDay, above) {
+    if (!ganttTip) {
+      ganttTip = document.createElement('span');
+      ganttTip.className = 'tk-gantt-tip';
+      ganttTip.setAttribute('aria-hidden', 'true');
+    }
+    if (ganttTip.parentNode !== track) track.appendChild(ganttTip);
+    ganttTip.textContent = text;
+    ganttTip.classList.toggle('is-above', !!above);
+    ganttTip.style.setProperty('--s', afterDay);
+  }
+  function hideHints() {
+    if (ganttTip) ganttTip.remove();
+    if (ganttGhost) ganttGhost.remove();
+  }
+  function paintDrag() {
+    [drag.bar, drag.label].forEach(function (el) {
+      if (!el) return;
+      el.style.setProperty('--s', drag.s);
+      el.style.setProperty('--n', drag.n);
+    });
+  }
+  function applyDrag(x) {
+    var shift = dayAt(drag.track, x) - drag.day0;
+    if (drag.mode === 'move') {
+      drag.s = clamp(drag.s0 + shift, 0, drag.days - drag.n0);
+    } else if (drag.mode === 'start') {
+      drag.s = clamp(drag.s0 + shift, 0, drag.s0 + drag.n0 - 1);
+      drag.n = drag.n0 + drag.s0 - drag.s;
+    } else if (drag.mode === 'end') {
+      drag.n = clamp(drag.n0 + shift, 1, drag.days - drag.s0);
+    } else {
+      var day = clamp(drag.day0 + shift, 0, drag.days - 1);
+      drag.s = Math.min(drag.day0, day);
+      drag.n = Math.abs(day - drag.day0) + 1;
+    }
+    paintDrag();
+    showTip(drag.track, rangeLabel(drag.first, drag.s, drag.n), dayAt(drag.track, x), true);
+  }
+  // While dragging near either edge of the timeline, keep it scrolling that way.
+  function edgeScroll() {
+    edgeFrame = 0;
+    if (!drag || !drag.moved) return;
+    var scroller = drag.track.closest('[data-gantt-scroll]');
+    var box = scroller.getBoundingClientRect();
+    var side = scroller.querySelector('.tk-gantt-side').getBoundingClientRect().width;
+    var step = lastX > box.right - 36 ? 8 : lastX < box.left + side + 36 ? -8 : 0;
+    if (step) { scroller.scrollLeft += step; applyDrag(lastX); }
+    edgeFrame = requestAnimationFrame(edgeScroll);
+  }
+  function endDrag(restore) {
+    var d = drag;
+    drag = null;
+    if (!d) return null;
+    if (edgeFrame) { cancelAnimationFrame(edgeFrame); edgeFrame = 0; }
+    document.body.classList.remove('tk-gantt-moving', 'tk-gantt-sizing');
+    d.track.classList.remove('is-dragging-row');
+    if (d.bar) d.bar.classList.remove('is-dragging');
+    hideHints();
+    if (restore && d.moved) {
+      if (d.mode === 'new') d.bar.remove();
+      else { d.s = d.s0; d.n = d.n0; drag = d; paintDrag(); drag = null; }
+    }
+    return d;
+  }
+  function saveDates(taskId, start, due) {
+    var tokenHolder = document.querySelector('[data-task-token]');
+    var data = new FormData();
+    data.append('token', tokenHolder ? tokenHolder.dataset.taskToken : '');
+    data.append('start_date', start);
+    data.append('due_date', due);
+    fetch('/tasks/' + taskId + '/dates', { method: 'POST', body: data, credentials: 'same-origin' })
+      .then(function (response) { if (!response.ok) throw new Error('Status ' + response.status); })
+      .catch(function () { window.alert('Those dates could not be saved. The timeline will reload.'); })
+      .then(refreshList);
+  }
+  document.addEventListener('pointerdown', function (event) {
+    if (event.button !== 0 || event.pointerType === 'touch' || !event.target.closest) return;
+    var track = event.target.closest('.tk-gantt-track');
+    var scroller = track && track.closest('[data-gantt-scroll]');
+    if (!scroller) return;
+    var bar = event.target.closest('.tk-gantt-bar');
+    if (bar && !bar.dataset.clipped) {
+      var rect = bar.getBoundingClientRect(), edge = Math.min(8, rect.width / 3);
+      drag = {
+        mode: event.clientX - rect.left < edge ? 'start' : rect.right - event.clientX < edge ? 'end' : 'move',
+        bar: bar, label: bar.nextElementSibling, id: bar.dataset.taskId, has: bar.dataset.has,
+        s: Number(bar.style.getPropertyValue('--s')), n: Number(bar.style.getPropertyValue('--n'))
+      };
+    } else if (!bar && track.dataset.schedule && event.target === track) {
+      drag = { mode: 'new', id: track.dataset.schedule, has: 'both', s: dayAt(track, event.clientX), n: 1 };
+    } else {
+      return;
+    }
+    drag.track = track; drag.x = lastX = event.clientX; drag.day0 = dayAt(track, event.clientX);
+    drag.days = Number(scroller.dataset.days); drag.first = scroller.dataset.first;
+    drag.s0 = drag.s; drag.n0 = drag.n; drag.moved = false;
+  });
+  document.addEventListener('pointermove', function (event) {
+    if (drag) {
+      lastX = event.clientX;
+      if (!drag.moved) {
+        if (Math.abs(event.clientX - drag.x) < 4) return;
+        drag.moved = true;
+        if (ganttGhost) ganttGhost.remove();
+        if (drag.mode === 'new') {
+          drag.bar = document.createElement('span');
+          drag.bar.className = 'tk-gantt-bar is-new';
+          drag.track.appendChild(drag.bar);
+        }
+        drag.bar.classList.add('is-dragging');
+        drag.track.classList.add('is-dragging-row');
+        document.body.classList.add(drag.mode === 'move' ? 'tk-gantt-moving' : 'tk-gantt-sizing');
+        edgeFrame = requestAnimationFrame(edgeScroll);
+      }
+      applyDrag(lastX);
+      return;
+    }
+    // Over a task with no dates: a marker follows the pointer and says which day a click would set.
+    var track = event.pointerType !== 'touch' && event.target.closest && event.target.closest('.tk-gantt-track[data-schedule]');
+    if (!track || event.target !== track) { hideHints(); return; }
+    var day = dayAt(track, event.clientX);
+    if (!ganttGhost) {
+      ganttGhost = document.createElement('span');
+      ganttGhost.className = 'tk-gantt-ghost';
+      ganttGhost.setAttribute('aria-hidden', 'true');
+    }
+    if (ganttGhost.parentNode !== track) track.appendChild(ganttGhost);
+    ganttGhost.style.setProperty('--s', day);
+    showTip(track, 'Click or drag to schedule · ' + dayLabel(track.closest('[data-gantt-scroll]').dataset.first, day), day + 1);
+  });
+  document.documentElement.addEventListener('mouseleave', hideHints);
+  document.addEventListener('pointerup', function () {
+    var d = endDrag(false);
+    if (!d) return;
+    if (!d.moved) {
+      // A plain click on an empty row schedules the task for that one day.
+      if (d.mode === 'new') saveDates(d.id, isoAdd(d.first, d.day0), isoAdd(d.first, d.day0));
+      return;
+    }
+    // The click that follows a drag must not open the task.
+    swallowClick = true;
+    setTimeout(function () { swallowClick = false; }, 0);
+    if (d.mode !== 'new' && d.s === d.s0 && d.n === d.n0) return;
+    var start = isoAdd(d.first, d.s), due = isoAdd(d.first, d.s + d.n - 1);
+    if (d.mode === 'move' && d.has === 'due') start = '';
+    if (d.mode === 'move' && d.has === 'start') due = '';
+    saveDates(d.id, start, due);
+  });
+  document.addEventListener('pointercancel', function () { endDrag(true); });
+  document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && drag) endDrag(true); });
+  document.addEventListener('click', function (event) {
+    if (swallowClick) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    // The due date beside a task name brings its bar into view.
+    var jump = event.target.closest && event.target.closest('[data-gantt-jump]');
+    var bar = jump && jump.closest('.tk-gantt-row').querySelector('.tk-gantt-bar');
+    if (!bar) return;
+    var scroller = bar.closest('[data-gantt-scroll]');
+    var box = scroller.getBoundingClientRect();
+    var side = scroller.querySelector('.tk-gantt-side').getBoundingClientRect().width;
+    var scale = box.width / scroller.offsetWidth || 1;
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scroller.scrollBy({ left: (bar.getBoundingClientRect().left - (box.left + side + 48)) / scale, behavior: calm ? 'auto' : 'smooth' });
+  }, true);
 
   document.addEventListener('turbo:frame-load', function (event) {
     if (event.target.id === FRAME_ID) scrollFeed();

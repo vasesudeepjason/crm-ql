@@ -2,8 +2,8 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}{{ task.title }} · Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=6">
-<script src="{{ url_for('static', filename='tasks.js') }}?v=2" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=11">
+<script src="{{ url_for('static', filename='tasks.js') }}?v=7" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-page-detail{% endblock %}
 {% block content %}
@@ -71,6 +71,24 @@
           </span>
         </label>
 
+        <div class="tk-field">
+          <span class="tk-field-name">Track time</span>
+          <span class="tk-field-value tk-timer">
+            {% if time.running %}
+            <button type="submit" form="tk-timer-stop" class="tk-timer-btn is-running" aria-label="Stop timer" title="Stop timer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.500" fill="currentColor"/></svg>
+              <span data-timer-elapsed="{{ time.running.elapsed }}">{{ time.running.clock }}</span>
+            </button>
+            {% else %}
+            <button type="submit" form="tk-timer-start" class="tk-timer-btn"{% if time.elsewhere %} title="Starting here stops your timer on {{ time.elsewhere.title }}"{% endif %}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3.500v9l7.500-4.500Z" fill="currentColor"/></svg>
+              Start
+            </button>
+            {% endif %}
+            {% if time.total_label %}<span class="tk-muted">{{ time.total_label }} logged</span>{% endif %}
+          </span>
+        </div>
+
         {% if not parent %}
         <label class="tk-field">
           <span class="tk-field-name">Project</span>
@@ -99,10 +117,87 @@
 
       <label class="tk-description">
         <span class="tk-field-name">Description</span>
-        <textarea name="description" rows="5" placeholder="Add a description">{{ task.description or '' }}</textarea>
+        <textarea name="description" rows="5" placeholder="Add a description. Paste links here, and drop or paste images and files to attach them.">{{ task.description or '' }}</textarea>
       </label>
       <noscript><button type="submit" class="btn btn-primary btn-sm">Save changes</button></noscript>
     </form>
+    {# The timer buttons sit inside the form above but post through these. #}
+    <form id="tk-timer-start" method="post" action="{{ url_for('task_timer_start', task_id=task.id) }}" hidden><input type="hidden" name="token" value="{{ token }}"></form>
+    <form id="tk-timer-stop" method="post" action="{{ url_for('task_timer_stop') }}" hidden><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ url_for('task_detail', task_id=task.id) }}"></form>
+
+    {% if links %}
+    <ul class="tk-links" aria-label="Links">
+      {% for link in links %}
+      <li><a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round" stroke-linejoin="round"><path d="M6.500 9.500a3 3 0 0 0 4.240 0l2.260-2.260a3 3 0 0 0-4.240-4.240l-.760.760M9.500 6.500a3 3 0 0 0-4.240 0L3 8.760A3 3 0 0 0 7.240 13l.760-.760"/></svg>
+        <span>{{ link.label }}</span></a>
+        <form method="post" action="{{ url_for('task_link_delete', link_id=link.id) }}">
+          <input type="hidden" name="token" value="{{ token }}">
+          <button type="submit" class="tk-link-remove" aria-label="Remove link {{ link.label }}">×</button>
+        </form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <section class="tk-attachments" aria-labelledby="tk-files-title" data-task-files>
+      <div class="tk-attach-head">
+        <h2 id="tk-files-title">Attachments <span class="tk-group-count">{{ files|length }}</span></h2>
+        <form method="post" action="{{ url_for('task_file_upload', task_id=task.id) }}" enctype="multipart/form-data" class="tk-attach-form" data-task-upload>
+          <input type="hidden" name="token" value="{{ token }}">
+          <label class="btn btn-outline btn-sm tk-attach-button">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7.500 8 12.500a3.200 3.200 0 0 1-4.500-4.500l5.500-5.500a2.100 2.100 0 0 1 3 3L6.500 11a1 1 0 0 1-1.500-1.500L9.500 5"/></svg>
+            Attach files
+            <input type="file" name="files" multiple accept="{{ file_accept }}" class="tk-attach-input">
+          </label>
+          <noscript><button type="submit" class="btn btn-primary btn-sm">Upload</button></noscript>
+        </form>
+      </div>
+      <p class="tk-muted tk-attach-hint" data-upload-status role="status">Images, PDF, Excel, PowerPoint, Word and text files, up to {{ file_max_mb }} MB each.</p>
+      {% if files %}
+      <ul class="tk-files">
+        {% for file in files %}
+        <li class="tk-file{% if file.is_image %} is-image{% endif %}">
+          <a class="tk-file-open" href="{{ url_for('task_file', file_id=file.id) }}" target="_blank" rel="noopener" data-turbo="false"
+             {% if not file.is_image and file.kind != 'PDF' %}download{% endif %}>
+            {% if file.is_image %}
+            <img src="{{ url_for('task_file', file_id=file.id) }}" alt="" loading="lazy">
+            {% else %}
+            <span class="tk-file-kind tk-kind-{{ file.kind|lower }}" aria-hidden="true">{{ file.extension }}</span>
+            {% endif %}
+            <span class="tk-file-copy"><strong>{{ file.name }}</strong><small>{{ file.kind }} · {{ file.size }} · {{ file.by }}</small></span>
+          </a>
+          {% if file.can_remove %}
+          <form method="post" action="{{ url_for('task_file_delete', file_id=file.id) }}" data-confirm="Remove {{ file.name }} from this task?">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="tk-file-remove" aria-label="Remove {{ file.name }}">×</button>
+          </form>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+
+    {% if time.entries %}
+    <section class="tk-subsection" aria-labelledby="tk-time-title">
+      <h2 id="tk-time-title">Time tracked <span class="tk-group-count">{{ time.total_label or 'Timer running' }}</span></h2>
+      {% for entry in time.entries %}
+      <div class="tk-subrow tk-timerow">
+        <span class="tk-avatar tk-tone-{{ entry.tone }}" aria-hidden="true">{{ entry.initials }}</span>
+        <span class="tk-timerow-name">{{ entry.user }}</span>
+        <span class="tk-muted">{{ entry.day }}</span>
+        {% if entry.live %}<span class="tk-tracked is-running">Running</span>
+        {% else %}<span class="tk-due-label">{{ entry.label }}</span>{% endif %}
+        {% if entry.can_remove %}
+        <form method="post" action="{{ url_for('task_time_delete', entry_id=entry.id) }}" data-confirm="Remove this {{ entry.label }} time entry?">
+          <input type="hidden" name="token" value="{{ token }}">
+          <button type="submit" class="tk-time-remove" aria-label="Remove {{ entry.label }} tracked by {{ entry.user }} on {{ entry.day }}">×</button>
+        </form>
+        {% else %}<span class="tk-time-remove" aria-hidden="true"></span>{% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
 
     {% if not parent %}
     <section class="tk-subsection" aria-labelledby="tk-subtasks-title">
@@ -153,7 +248,7 @@
         <span class="tk-avatar tk-tone-{{ event.tone }}" aria-hidden="true">{{ event.initials }}</span>
         <div class="tk-comment-body">
           <p class="tk-comment-meta"><strong>{{ event.user }}</strong><time>{{ event.time }}</time></p>
-          <p class="tk-comment-text">{{ event.body }}</p>
+          <p class="tk-comment-text">{{ event.body|linkify }}</p>
         </div>
       </div>
       {% else %}

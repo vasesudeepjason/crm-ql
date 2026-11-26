@@ -2,6 +2,7 @@ import sqlite3
 import calendar
 import csv
 import io
+import re
 import os
 import shutil
 from urllib.parse import urlsplit
@@ -21,6 +22,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, flash, g, session, jsonify, Response, send_file, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
+from markupsafe import Markup, escape
 
 try:
     from authlib.integrations.flask_client import OAuth
@@ -350,6 +352,13 @@ def _init_schema(db):
         ("updated_at", "TEXT"),
     ])
 
+    # A follow-up a telecaller (or anyone without manager rights) has handed to a manager.
+    _add_cols(db, "leads", [
+        ("followup_manager_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+        ("followup_requested_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+        ("followup_note", "TEXT"),
+        ("followup_requested_at", "TEXT"),
+    ])
     _add_cols(db, "leads", [
         ("company_id", "INTEGER"),
         ("contact_id", "INTEGER"),
@@ -618,6 +627,16 @@ def _init_schema(db):
         completed INTEGER NOT NULL DEFAULT 0
     )""")
     db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user_time ON personal_reminders(user_id, remind_at)")
+    # repeat_unit: '' (one-off), day, week, month or year. repeat_days holds the chosen weekdays
+    # (0 = Monday) for weekly repeats, or the day of the month to aim for on monthly and yearly ones.
+    _add_cols(db, "personal_reminders", [
+        ("notes", "TEXT"),
+        ("repeat_unit", "TEXT NOT NULL DEFAULT ''"),
+        ("repeat_every", "INTEGER NOT NULL DEFAULT 1"),
+        ("repeat_days", "TEXT NOT NULL DEFAULT ''"),
+        ("repeat_until", "TEXT"),
+        ("snoozed_until", "TEXT"),
+    ])
     db.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1346,14 +1365,21 @@ def leads_list():
     search = request.args.get("q", "").strip()
     tag_filter = request.args.get("tag", "").strip()
     interest_filter = request.args.get("interest", "").strip()
+    mine_filter = request.args.get("mine") == "1"
+    handed_to_me = db.execute(
+        f"SELECT COUNT(*) FROM leads WHERE {clause} AND followup_manager_id = ?", [*params, user["id"]]).fetchone()[0]
 
     # Everything except the stage filter, so the stage tabs can show a count for each stage.
     scope = f"""
         FROM leads
         LEFT JOIN users ON leads.owner_id = users.id
         LEFT JOIN companies ON leads.company_id = companies.id
+        LEFT JOIN users AS follow_manager ON leads.followup_manager_id = follow_manager.id
         WHERE {clause}
     """
+    if mine_filter:
+        scope += " AND leads.followup_manager_id = ?"
+        params.append(user["id"])
     if interest_filter:
         scope += " AND interest_level = ?"
         params.append(interest_filter)
@@ -1370,7 +1396,8 @@ def leads_list():
         if row["stage"] in stage_counts:
             stage_counts[row["stage"]] = row["c"]
 
-    query = f"SELECT leads.*, users.name AS owner_name, companies.name AS company_name {scope}"
+    query = f"""SELECT leads.*, users.name AS owner_name, companies.name AS company_name,
+        follow_manager.name AS followup_manager_name {scope}"""
     if stage_filter:
         query += " AND stage = ?"
         params.append(stage_filter)
@@ -1396,6 +1423,8 @@ def leads_list():
         interest_filter=interest_filter,
         interest_levels=INTEREST_LEVELS,
         user=user,
+        mine_filter=mine_filter,
+        handed_to_me=handed_to_me,
     )
 
 
@@ -1884,6 +1913,25 @@ def lead_detail(lead_id):
     services_selected = (lead["services_required"] or "").split(",") if lead["services_required"] else []
     telecallers = db.execute("SELECT id, name FROM users WHERE role = 'telecaller' ORDER BY name").fetchall()
 
+    # Opening the lead clears its "asked you to follow up" notification.
+    if db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND lead_id=? AND read_at IS NULL",
+                  (now_str(), user["id"], lead_id)).rowcount:
+        db.commit()
+        _live_touch()
+    followup = None
+    if lead["followup_manager_id"]:
+        names = {r["id"]: r["name"] for r in db.execute(
+            "SELECT id, name FROM users WHERE id IN (?, ?)", (lead["followup_manager_id"], lead["followup_requested_by"] or 0))}
+        followup = {
+            "manager": names.get(lead["followup_manager_id"], "a manager"),
+            "requester": names.get(lead["followup_requested_by"], "A former user"),
+            "for_me": lead["followup_manager_id"] == user["id"],
+            "by_me": lead["followup_requested_by"] == user["id"],
+            "note": lead["followup_note"], "date": lead["follow_up_date"],
+        }
+    followup_managers = db.execute(
+        "SELECT id, name FROM users WHERE role = 'manager' AND id <> ? ORDER BY name", (user["id"],)).fetchall()
+
     is_owner = lead["owner_id"] == user["id"]
     shared_with = db.execute(
         """SELECT lead_shares.user_id, users.name, users.role
@@ -1915,6 +1963,7 @@ def lead_detail(lead_id):
         decision_maker_opts=DECISION_MAKER_OPTIONS, interest_levels=INTEREST_LEVELS,
         priorities=PRIORITIES, budget_ranges=BUDGET_RANGES, lost_reasons=LOST_REASONS,
         telecallers=telecallers, is_owner=is_owner, shared_with=shared_with, shareable_users=shareable_users,
+        followup=followup, followup_managers=followup_managers,
     )
 
 
@@ -2094,6 +2143,85 @@ def assign_lead(lead_id):
     log_lead_event(lead_id, "Lead Assigned", owner["name"] if owner else "Unassigned")
     log_activity("Lead Assigned", "lead", lead_id, lead["name"] if lead else "", owner["name"] if owner else "Unassigned")
     flash("Lead assignment updated.", "success")
+    return redirect(url_for("lead_detail", lead_id=lead_id))
+
+
+def _visible_lead(db, user, lead_id):
+    clause, params = visible_leads_clause(user)
+    return db.execute(f"SELECT leads.* FROM leads WHERE leads.id = ? AND {clause}", [lead_id, *params]).fetchone()
+
+
+@app.post("/leads/<int:lead_id>/request-followup")
+@login_required
+def request_lead_followup(lead_id):
+    """Hand a lead's next follow-up to a manager, for example after a call.
+
+    The lead moves to the Follow Up stage with a follow-up date, the manager is notified,
+    and it shows under "Handed to me" in their lead list. Ownership does not change.
+    """
+    db, user = get_db(), current_user()
+    lead = _visible_lead(db, user, lead_id)
+    if lead is None:
+        flash("Lead not found, or it's not visible to your account.", "error")
+        return redirect(url_for("leads_list"))
+    back = redirect(url_for("lead_detail", lead_id=lead_id))
+    manager = db.execute("SELECT id, name FROM users WHERE id = ? AND role = 'manager'",
+                         (request.form.get("manager_id", type=int),)).fetchone()
+    if manager is None or manager["id"] == user["id"]:
+        flash("Choose a manager to follow up on this lead.", "error")
+        return back
+    try:
+        when = date.fromisoformat(request.form.get("follow_up_date", "") or today_str()).isoformat()
+    except ValueError:
+        flash("Enter a valid follow-up date.", "error")
+        return back
+    if when < today_str():
+        flash("Choose a follow-up date of today or later.", "error")
+        return back
+    note = " ".join(request.form.get("note", "").split())[:500]
+    stage = lead["stage"] if lead["stage"] in ("Won", "Lost") else "Follow Up"
+    db.execute(
+        """UPDATE leads SET stage=?, follow_up_date=?, followup_manager_id=?, followup_requested_by=?,
+           followup_note=?, followup_requested_at=?, updated_at=? WHERE id=?""",
+        (stage, when, manager["id"], user["id"], note, now_str(), now_str(), lead_id))
+    # A new request replaces any earlier unread one for this lead.
+    db.execute("DELETE FROM notifications WHERE lead_id=? AND read_at IS NULL", (lead_id,))
+    db.execute(
+        "INSERT INTO notifications (user_id, kind, lead_id, actor_id, title, body, created_at) VALUES (?,?,?,?,?,?,?)",
+        (manager["id"], "lead_followup", lead_id, user["id"], f"{user['name']} asked you to follow up",
+         f"{lead['name']}: {note}" if note else lead["name"], now_str()))
+    db.commit()
+    _live_touch()
+    detail = f"Handed to {manager['name']} for {when}" + (f": {note}" if note else "")
+    log_lead_event(lead_id, "Follow-up Requested", detail)
+    log_activity("Follow-up Requested", "lead", lead_id, lead["name"], detail)
+    flash(f"{manager['name']} has been asked to follow up on {when}.", "success")
+    return back
+
+
+@app.post("/leads/<int:lead_id>/followup-done")
+@login_required
+def finish_lead_followup(lead_id):
+    """Close a handed-over follow-up. The manager it was handed to, any manager, or the
+    person who asked can close it."""
+    db, user = get_db(), current_user()
+    lead = _visible_lead(db, user, lead_id)
+    if lead is None:
+        flash("Lead not found, or it's not visible to your account.", "error")
+        return redirect(url_for("leads_list"))
+    if not lead["followup_manager_id"]:
+        return redirect(url_for("lead_detail", lead_id=lead_id))
+    if user["role"] != "manager" and lead["followup_requested_by"] != user["id"]:
+        flash("Only a manager or the person who asked can close this follow-up request.", "error")
+        return redirect(url_for("lead_detail", lead_id=lead_id))
+    done = user["role"] == "manager"
+    db.execute("""UPDATE leads SET followup_manager_id=NULL, followup_requested_by=NULL, followup_note=NULL,
+                  followup_requested_at=NULL, updated_at=? WHERE id=?""", (now_str(), lead_id))
+    db.execute("UPDATE notifications SET read_at=? WHERE lead_id=? AND read_at IS NULL", (now_str(), lead_id))
+    db.commit()
+    _live_touch()
+    log_lead_event(lead_id, "Follow-up Handled" if done else "Follow-up Request Withdrawn", "")
+    flash("Follow-up marked as handled." if done else "Follow-up request withdrawn.", "success")
     return redirect(url_for("lead_detail", lead_id=lead_id))
 
 
@@ -2408,18 +2536,126 @@ def reminder_day(value):
     return date.fromisoformat(today_str())
 
 
+REMINDER_PRESETS = [("", "Does not repeat"), ("daily", "Every day"), ("weekdays", "Every weekday (Mon to Fri)"),
+                    ("weekly", "Every week"), ("monthly", "Every month"), ("yearly", "Every year"), ("custom", "Custom…")]
+REMINDER_UNITS = [("day", "days"), ("week", "weeks"), ("month", "months"), ("year", "years")]
+WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+REMINDER_TIME = "%Y-%m-%dT%H:%M"
+
+
+def _reminder_days(row):
+    return [int(part) for part in (row["repeat_days"] or "").split(",") if part.strip().isdigit()]
+
+
+def _next_reminder_time(when, unit, every, days):
+    """The occurrence after `when` for a repeating reminder, or None."""
+    every = max(1, every or 1)
+    if unit == "day":
+        return when + timedelta(days=every)
+    if unit == "week":
+        chosen = sorted({d for d in days if 0 <= d <= 6}) or [when.weekday()]
+        first_week = when.date() - timedelta(days=when.weekday())
+        for step in range(1, 7 * every + 8):
+            candidate = when + timedelta(days=step)
+            weeks = ((candidate.date() - timedelta(days=candidate.weekday())) - first_week).days // 7
+            if candidate.weekday() in chosen and weeks % every == 0:
+                return candidate
+        return when + timedelta(weeks=every)
+    if unit in ("month", "year"):
+        # Aim for the original day each time, so the 31st does not drift to the 28th for good.
+        target_day = days[0] if days else when.day
+        months = when.year * 12 + when.month - 1 + (every if unit == "month" else 12 * every)
+        year, month = months // 12, months % 12 + 1
+        if year > 9998:
+            return None
+        return when.replace(year=year, month=month, day=min(target_day, calendar.monthrange(year, month)[1]))
+    return None
+
+
+def _reminder_occurrences(row, first, last):
+    """Later occurrences of a repeating reminder that fall on first..last (dates), as datetimes."""
+    if not row["repeat_unit"] or row["completed"]:
+        return []
+    until = row["repeat_until"] or "9999-12-31"
+    days, found = _reminder_days(row), []
+    when = datetime.strptime(row["remind_at"], REMINDER_TIME)
+    for _ in range(800):
+        when = _next_reminder_time(when, row["repeat_unit"], row["repeat_every"], days)
+        if when is None or when.date() > last or when.date().isoformat() > until:
+            break
+        if when.date() >= first:
+            found.append(when)
+    return found
+
+
+def _reminder_repeat_label(row):
+    unit, every = row["repeat_unit"], row["repeat_every"] or 1
+    if not unit:
+        return ""
+    days = _reminder_days(row)
+    if unit == "week" and every == 1 and days == [0, 1, 2, 3, 4]:
+        label = "Every weekday"
+    else:
+        label = f"Every {unit}" if every == 1 else f"Every {every} {unit}s"
+        if unit == "week" and days:
+            label += " on " + ", ".join(WEEKDAY_NAMES[d] for d in days if 0 <= d <= 6)
+    if row["repeat_until"]:
+        end = date.fromisoformat(row["repeat_until"])
+        label += f" until {end.day} {end.strftime('%b %Y')}"
+    return label
+
+
+def _reminder_preset(row, when):
+    """Which option of the Repeats menu matches a saved reminder."""
+    if not row or not row["repeat_unit"]:
+        return ""
+    unit, every, days = row["repeat_unit"], row["repeat_every"] or 1, _reminder_days(row)
+    if every == 1:
+        if unit == "day":
+            return "daily"
+        if unit == "week" and days == [0, 1, 2, 3, 4]:
+            return "weekdays"
+        if unit == "week" and days in ([], [when.weekday()]):
+            return "weekly"
+        if unit == "month":
+            return "monthly"
+        if unit == "year":
+            return "yearly"
+    return "custom"
+
+
+def _reminder_now():
+    return datetime.now(APP_TIMEZONE).strftime(REMINDER_TIME)
+
+
 @app.get("/reminders")
 @login_required
 def reminders():
     day = reminder_day(request.args.get("day"))
     first = day.replace(day=1)
     last = day.replace(day=calendar.monthrange(day.year, day.month)[1])
-    rows = get_db().execute("""SELECT * FROM personal_reminders WHERE user_id=?
-        AND remind_at>=? AND remind_at<? ORDER BY remind_at,id""",
-        (current_user()["id"], first.isoformat(), (last + timedelta(days=1)).isoformat())).fetchall()
+    db, uid, now = get_db(), current_user()["id"], _reminder_now()
     by_day = {}
-    for row in rows:
-        by_day.setdefault(row["remind_at"][:10], []).append(row)
+
+    def show(row, when, upcoming):
+        by_day.setdefault(when[:10], []).append({
+            "id": row["id"], "title": row["title"], "notes": row["notes"], "remind_at": when, "time": when[11:],
+            "completed": row["completed"], "repeat": _reminder_repeat_label(row), "upcoming": upcoming,
+            "due": not upcoming and not row["completed"] and when <= now,
+            "snoozed": bool(row["snoozed_until"] and row["snoozed_until"] > now and not upcoming),
+        })
+
+    for row in db.execute("""SELECT * FROM personal_reminders WHERE user_id=?
+            AND remind_at>=? AND remind_at<? ORDER BY remind_at,id""",
+            (uid, first.isoformat(), (last + timedelta(days=1)).isoformat())):
+        show(row, row["remind_at"], False)
+    # Repeating reminders are stored once, at their next occurrence; the later ones are worked out here.
+    for row in db.execute("""SELECT * FROM personal_reminders WHERE user_id=? AND repeat_unit<>'' AND completed=0
+            AND remind_at<?""", (uid, (last + timedelta(days=1)).isoformat())):
+        for when in _reminder_occurrences(row, first, last):
+            show(row, when.strftime(REMINDER_TIME), True)
+    for items in by_day.values():
+        items.sort(key=lambda item: (item["remind_at"], item["id"]))
     return render_template("reminders.html", day=day, weeks=calendar.Calendar().monthdayscalendar(day.year,day.month),
         by_day=by_day, previous=first-timedelta(days=1), following=last+timedelta(days=1))
 
@@ -2436,38 +2672,108 @@ def edit_reminder(reminder_id=None):
             abort(404)
     day = reminder_day(request.args.get("day"))
     when = row["remind_at"] if row else day.isoformat() + "T09:00"
-    title = row["title"] if row else ""
+    started = datetime.strptime(when, REMINDER_TIME)
+    values = {
+        "title": row["title"] if row else "", "notes": (row["notes"] or "") if row else "",
+        "repeat": _reminder_preset(row, started),
+        "unit": (row["repeat_unit"] if row and row["repeat_unit"] else "week"),
+        "every": (row["repeat_every"] if row else 1) or 1,
+        "days": _reminder_days(row) if row and row["repeat_unit"] == "week" else [started.weekday()],
+        "until": (row["repeat_until"] or "") if row else "",
+    }
     if request.method == "POST":
-        when, title = request.form.get("remind_at", ""), request.form.get("title", "").strip()
+        form = request.form
+        when = form.get("remind_at", "")
+        values.update(title=form.get("title", "").strip()[:300], notes=form.get("notes", "").strip()[:2000],
+                      repeat=form.get("repeat", ""), unit=form.get("repeat_unit", "week"),
+                      every=form.get("repeat_every", type=int) or 1,
+                      days=sorted({d for d in form.getlist("repeat_days", type=int) if 0 <= d <= 6}),
+                      until=form.get("repeat_until", "").strip())
+        error = None
         try:
-            parsed = datetime.strptime(when, "%Y-%m-%dT%H:%M")
-            valid = 1 < parsed.year < 9999 and bool(title)
+            parsed = datetime.strptime(when, REMINDER_TIME)
+            if not (1 < parsed.year < 9999) or not values["title"]:
+                raise ValueError
         except ValueError:
-            valid = False
-        if valid:
-            when = parsed.isoformat(timespec="minutes")
-            if row:
-                db.execute("UPDATE personal_reminders SET title=?,remind_at=? WHERE id=? AND user_id=?", (title, when, reminder_id, uid))
+            parsed, error = None, "Enter a reminder and a valid date and time."
+        unit, every, days, until = "", 1, [], None
+        if parsed and values["repeat"]:
+            preset = values["repeat"]
+            if preset == "custom":
+                unit, every = values["unit"], values["every"]
+                if unit not in dict(REMINDER_UNITS) or not 1 <= every <= 365:
+                    error = "Choose how often the reminder repeats: every 1 to 365 days, weeks, months or years."
+                days = values["days"] if unit == "week" else []
+            elif preset in ("daily", "weekdays", "weekly", "monthly", "yearly"):
+                unit = {"daily": "day", "weekdays": "week", "weekly": "week", "monthly": "month", "yearly": "year"}[preset]
+                days = [0, 1, 2, 3, 4] if preset == "weekdays" else []
             else:
-                db.execute("INSERT INTO personal_reminders(user_id,title,remind_at) VALUES(?,?,?)", (uid, title, when))
+                error = "Choose how often the reminder repeats."
+            if unit == "week" and not days:
+                days = [parsed.weekday()]
+            if unit in ("month", "year"):
+                days = [parsed.day]
+            if values["until"]:
+                try:
+                    until = date.fromisoformat(values["until"]).isoformat()
+                    if until < parsed.date().isoformat():
+                        error = "Choose an end date on or after the reminder's date."
+                except ValueError:
+                    error = "Enter a valid end date."
+            # A weekly reminder starts on the first chosen weekday on or after the date entered.
+            if not error and unit == "week" and parsed.weekday() not in days:
+                while parsed.weekday() not in days:
+                    parsed += timedelta(days=1)
+        if not error:
+            when = parsed.strftime(REMINDER_TIME)
+            fields = (values["title"], when, values["notes"], unit, every, ",".join(str(d) for d in days), until)
+            if row:
+                db.execute("""UPDATE personal_reminders SET title=?,remind_at=?,notes=?,repeat_unit=?,repeat_every=?,
+                    repeat_days=?,repeat_until=?,snoozed_until=NULL WHERE id=? AND user_id=?""", fields + (reminder_id, uid))
+            else:
+                db.execute("""INSERT INTO personal_reminders(title,remind_at,notes,repeat_unit,repeat_every,repeat_days,
+                    repeat_until,user_id) VALUES(?,?,?,?,?,?,?,?)""", fields + (uid,))
             db.commit()
             return redirect(url_for("reminders", day=when[:10]))
-        flash("Enter a reminder and a valid date and time.", "error")
-    return render_template("edit_reminder.html", title=title, when=when, editing=row is not None, day=day), (422 if request.method == "POST" else 200)
+    else:
+        error = None
+    # The error is shown inside the form, so it also appears when the form is open in the pop-up.
+    return render_template("edit_reminder.html", values=values, when=when, editing=row is not None, day=day, error=error,
+        presets=REMINDER_PRESETS, units=REMINDER_UNITS, weekdays=list(enumerate(WEEKDAY_NAMES))), (422 if request.method == "POST" else 200)
 
 
 @app.post("/reminders/<int:reminder_id>/update")
 @login_required
 def update_reminder(reminder_id):
     db, uid = get_db(), current_user()["id"]
-    row = db.execute("SELECT remind_at FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid)).fetchone()
+    row = db.execute("SELECT * FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid)).fetchone()
     if not row:
         abort(404)
     action = request.form.get("action")
+    now = datetime.now(APP_TIMEZONE).replace(tzinfo=None)
     if action == "delete":
         db.execute("DELETE FROM personal_reminders WHERE id=? AND user_id=?", (reminder_id, uid))
+    elif action == "complete" and row["repeat_unit"] and not row["completed"]:
+        # Keep this occurrence as a finished entry, then move the reminder on to its next time.
+        # Occurrences that were missed while it sat undone are skipped.
+        db.execute("INSERT INTO personal_reminders(user_id,title,notes,remind_at,completed) VALUES(?,?,?,?,1)",
+                   (uid, row["title"], row["notes"], row["remind_at"]))
+        when, days = datetime.strptime(row["remind_at"], REMINDER_TIME), _reminder_days(row)
+        for _ in range(800):
+            when = _next_reminder_time(when, row["repeat_unit"], row["repeat_every"], days)
+            if when is None or when > now:
+                break
+        if when is None or (row["repeat_until"] and when.date().isoformat() > row["repeat_until"]):
+            db.execute("DELETE FROM personal_reminders WHERE id=?", (reminder_id,))   # the series has ended
+        else:
+            db.execute("UPDATE personal_reminders SET remind_at=?,snoozed_until=NULL WHERE id=?",
+                       (when.strftime(REMINDER_TIME), reminder_id))
     elif action in ("complete", "reopen"):
-        db.execute("UPDATE personal_reminders SET completed=? WHERE id=? AND user_id=?", (action == "complete", reminder_id, uid))
+        db.execute("UPDATE personal_reminders SET completed=?,snoozed_until=NULL WHERE id=? AND user_id=?",
+                   (action == "complete", reminder_id, uid))
+    elif action in ("snooze-hour", "snooze-tomorrow"):
+        later = now + timedelta(hours=1) if action == "snooze-hour" else (now + timedelta(days=1)).replace(hour=9, minute=0)
+        db.execute("UPDATE personal_reminders SET snoozed_until=? WHERE id=?", (later.strftime(REMINDER_TIME), reminder_id))
     else:
         abort(400)
     db.commit()
@@ -2477,9 +2783,10 @@ def update_reminder(reminder_id):
 @app.get("/reminders/due")
 @login_required
 def due_reminders():
-    cutoff = datetime.now(APP_TIMEZONE).isoformat(timespec="minutes")[:16]
+    cutoff = _reminder_now()
     row = get_db().execute("""SELECT count(*) AS total,min(remind_at) AS earliest FROM personal_reminders
-        WHERE user_id=? AND completed=0 AND remind_at<=?""", (current_user()["id"], cutoff)).fetchone()
+        WHERE user_id=? AND completed=0 AND remind_at<=? AND (snoozed_until IS NULL OR snoozed_until<=?)""",
+        (current_user()["id"], cutoff, cutoff)).fetchone()
     response = jsonify(count=row["total"], url=url_for("reminders", day=row["earliest"][:10]) if row["total"] else None)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -3673,6 +3980,35 @@ def _init_work_tasks(db):
         ("legacy_project_task_id", "INTEGER"),
     ])
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_project ON work_tasks(project_id)")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            user_id INTEGER,
+            original_name TEXT NOT NULL,
+            stored_name TEXT NOT NULL UNIQUE,
+            size INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_work_task_files_task ON work_task_files(task_id, id)")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            label TEXT NOT NULL,
+            user_id INTEGER,
+            created_at TEXT NOT NULL,
+            removed_at TEXT,
+            UNIQUE (task_id, url),
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+    _init_task_time(db)
     _migrate_project_tasks(db)
     _init_notifications(db)
 
@@ -3705,6 +4041,199 @@ def _migrate_project_tasks(db):
             db.execute("INSERT OR IGNORE INTO work_task_assignees (task_id, user_id) VALUES (?,?)", (cur.lastrowid, assignee_id))
         db.execute("INSERT INTO work_task_events (task_id, user_id, kind, body, created_at) VALUES (?,?,?,?,?)",
                    (cur.lastrowid, created_by, "activity", "created this task", created_at))
+
+
+# ---- time tracking ----
+# One row per stretch of work on a task. ended_at is empty while the timer runs. A person
+# has at most one running timer: starting another stops the first.
+def _init_task_time(db):
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS work_task_time (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            user_id INTEGER,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            seconds INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_work_task_time_task ON work_task_time(task_id, id)")
+    db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_work_task_time_running
+                  ON work_task_time(user_id) WHERE ended_at IS NULL""")
+
+
+def _seconds_since(stamp):
+    started = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+    return max(0, int((datetime.now(APP_TIMEZONE).replace(tzinfo=None) - started).total_seconds()))
+
+
+def _duration_label(seconds):
+    """A length of time as people say it: 45s, 12m, 2h 5m."""
+    seconds = int(seconds or 0)
+    hours, minutes = seconds // 3600, seconds % 3600 // 60
+    if hours:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    return f"{minutes}m" if minutes else f"{seconds}s"
+
+
+def _clock_label(seconds):
+    seconds = int(seconds or 0)
+    return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+
+def _running_timer(db, user):
+    """The signed-in person's running timer, if any."""
+    row = db.execute(
+        """SELECT t.id, t.task_id, t.started_at, w.title FROM work_task_time t
+           JOIN work_tasks w ON w.id = t.task_id WHERE t.user_id=? AND t.ended_at IS NULL""", (user["id"],)).fetchone()
+    if not row:
+        return None
+    elapsed = _seconds_since(row["started_at"])
+    return {"id": row["id"], "task_id": row["task_id"], "title": row["title"], "elapsed": elapsed, "clock": _clock_label(elapsed)}
+
+
+def _stop_running_timer(db, user):
+    timer = _running_timer(db, user)
+    if timer:
+        db.execute("UPDATE work_task_time SET ended_at=?, seconds=? WHERE id=?", (now_str(), timer["elapsed"], timer["id"]))
+        _log_task_event(db, timer["task_id"], f"tracked {_duration_label(timer['elapsed'])}")
+    return timer
+
+
+def _task_time_view(db, task_id, user):
+    """Time logged on one task: the entries, their total, and this person's running timer."""
+    entries, total, running = [], 0, None
+    for row in db.execute(
+        """SELECT t.*, u.name AS user_name FROM work_task_time t
+           LEFT JOIN users u ON u.id = t.user_id WHERE t.task_id=? ORDER BY t.id DESC""", (task_id,)):
+        live = row["ended_at"] is None
+        if live and row["user_id"] is None:
+            continue  # a timer left running by someone whose account was removed
+        seconds = _seconds_since(row["started_at"]) if live else row["seconds"]
+        if live and row["user_id"] == user["id"]:
+            running = {"elapsed": seconds, "clock": _clock_label(seconds)}
+        if not live:
+            total += seconds
+        started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
+        entries.append({
+            "id": row["id"], "user": row["user_name"] or "Former user", "initials": _initials(row["user_name"]),
+            "tone": (row["user_id"] or 0) % 5, "day": f"{started.day} {started.strftime('%b')}",
+            "label": _duration_label(seconds), "live": live,
+            "can_remove": not live and (user["role"] == "manager" or row["user_id"] == user["id"]),
+        })
+    mine = _running_timer(db, user)
+    return {
+        "entries": entries[:30], "total_label": _duration_label(total) if total else "",
+        "running": running, "elsewhere": mine if mine and mine["task_id"] != task_id else None,
+    }
+
+
+# ---- task attachments and links ----
+# Files are kept outside the code folder (instance/task_files, or TASK_FILE_DIR) under a
+# random name; the name the person uploaded is only stored in the database.
+TASK_FILE_TYPES = {
+    ".png": ("image/png", "Image"), ".jpg": ("image/jpeg", "Image"), ".jpeg": ("image/jpeg", "Image"),
+    ".webp": ("image/webp", "Image"), ".gif": ("image/gif", "Image"),
+    ".pdf": ("application/pdf", "PDF"),
+    ".xls": ("application/vnd.ms-excel", "Excel"),
+    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel"),
+    ".csv": ("text/csv", "CSV"),
+    ".ppt": ("application/vnd.ms-powerpoint", "PowerPoint"),
+    ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "PowerPoint"),
+    ".doc": ("application/msword", "Word"),
+    ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Word"),
+    ".txt": ("text/plain", "Text"),
+}
+TASK_FILE_MAX_BYTES = 10 * 1024 * 1024
+TASK_FILE_MAX_PER_TASK = 30
+_URL_PATTERN = re.compile(r"(?:https?://|www\.)[^\s<>\"']+", re.IGNORECASE)
+
+
+def _task_file_dir():
+    return os.environ.get("TASK_FILE_DIR", "").strip() or os.path.join(app.instance_path, "task_files")
+
+
+def _file_size_label(size):
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _find_links(text):
+    """(shown text, address) for each web link in the text, without duplicates."""
+    links, seen = [], set()
+    for match in _URL_PATTERN.finditer(text or ""):
+        shown = match.group(0).rstrip(".,;:!?)]}")
+        href = shown if shown.lower().startswith("http") else "https://" + shown
+        if href not in seen:
+            seen.add(href)
+            links.append((shown, href))
+    return links
+
+
+def _keep_task_links(db, task_id, text, previous_text=None):
+    """Save every web link in the description on the task, so it stays after the text is edited.
+
+    A link someone removed stays removed while it is still in the text. It comes back only
+    when it is typed in again (it was not in previous_text). Returns True if anything changed.
+    """
+    before = {href for _, href in _find_links(previous_text)} if previous_text is not None else None
+    changed = False
+    for label, href in _find_links(text):
+        row = db.execute("SELECT id, removed_at FROM work_task_links WHERE task_id=? AND url=?", (task_id, href)).fetchone()
+        if row is None:
+            user = current_user()
+            db.execute("INSERT INTO work_task_links (task_id,url,label,user_id,created_at) VALUES (?,?,?,?,?)",
+                       (task_id, href, label[:300], user["id"] if user else None, now_str()))
+            changed = True
+        elif row["removed_at"] and before is not None and href not in before:
+            db.execute("UPDATE work_task_links SET removed_at=NULL WHERE id=?", (row["id"],))
+            changed = True
+    return changed
+
+
+@app.template_filter("linkify")
+def linkify_filter(text):
+    """Escape the text and turn web addresses in it into links."""
+    text, out, position = text or "", [], 0
+    for match in _URL_PATTERN.finditer(text):
+        shown = match.group(0).rstrip(".,;:!?)]}")
+        href = shown if shown.lower().startswith("http") else "https://" + shown
+        out.append(escape(text[position:match.start()]))
+        out.append(Markup('<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>') % (href, shown))
+        position = match.start() + len(shown)
+    out.append(escape(text[position:]))
+    return Markup("").join(out)
+
+
+def _task_file_views(db, task, user):
+    files = []
+    for row in db.execute(
+        """SELECT f.*, u.name AS user_name FROM work_task_files f
+           LEFT JOIN users u ON u.id = f.user_id WHERE f.task_id=? ORDER BY f.id""", (task["id"],)):
+        extension = os.path.splitext(row["stored_name"])[1].lower()
+        kind = TASK_FILE_TYPES.get(extension, ("", "File"))[1]
+        files.append({
+            "id": row["id"], "name": row["original_name"], "kind": kind, "is_image": kind == "Image",
+            "extension": extension.lstrip(".").upper(), "size": _file_size_label(row["size"]),
+            "by": row["user_name"] or "Former user",
+            "can_remove": user["role"] == "manager" or user["id"] in (row["user_id"], task["created_by"]),
+        })
+    return files
+
+
+def _remove_task_files(stored_names):
+    """Delete stored attachment files from disk. Missing files are ignored."""
+    folder = _task_file_dir()
+    for name in stored_names:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
 
 
 def _task_token():
@@ -3764,7 +4293,7 @@ def _due_view(value, done=False):
 def _task_views(db, rows):
     """Turn work_tasks rows into dicts carrying assignees, tags and display values."""
     ids = [row["id"] for row in rows]
-    people, tags = {}, {}
+    people, tags, tracked = {}, {}, {}
     if ids:
         marks = ",".join("?" * len(ids))
         for r in db.execute(
@@ -3774,6 +4303,11 @@ def _task_views(db, rows):
                 {"id": r["id"], "name": r["name"], "initials": _initials(r["name"]), "tone": r["id"] % 5})
         for r in db.execute(f"SELECT task_id, tag FROM work_task_tags WHERE task_id IN ({marks}) ORDER BY tag", ids):
             tags.setdefault(r["task_id"], []).append({"name": r["tag"], "tone": sum(map(ord, r["tag"])) % 6})
+        for r in db.execute(
+            f"""SELECT task_id, SUM(seconds) AS seconds,
+                       SUM(ended_at IS NULL AND user_id IS NOT NULL) AS running
+                FROM work_task_time WHERE task_id IN ({marks}) GROUP BY task_id""", ids):
+            tracked[r["task_id"]] = (r["seconds"] or 0, bool(r["running"]))
     project_names = {}
     project_ids = sorted({row["project_id"] for row in rows if row["project_id"]})
     if project_ids:
@@ -3787,6 +4321,8 @@ def _task_views(db, rows):
         item["assignees"] = people.get(row["id"], [])
         item["tags"] = tags.get(row["id"], [])
         item["due"] = _due_view(row["due_date"], row["status"] == "Complete")
+        seconds, item["timer_running"] = tracked.get(row["id"], (0, False))
+        item["tracked"] = _duration_label(seconds) if seconds else ""
         item["subtasks"] = []
         views.append(item)
     return views
@@ -3872,7 +4408,7 @@ def _tasks_page(template, scope, **extra):
         template, users=scope["users"], assignee=scope["assignee"], show_closed=scope["show_closed"],
         token=_task_token(), statuses=WORK_STATUSES, priorities=WORK_PRIORITIES,
         project_filter=scope["project"], task_projects=scope["projects"],
-        here=request.full_path.rstrip("?"), **extra,
+        here=request.full_path.rstrip("?"), running_timer=_running_timer(get_db(), current_user()), **extra,
     )
 
 
@@ -3941,6 +4477,95 @@ def tasks_calendar():
     )
 
 
+GANTT_DAY_WIDTHS = {"week": 36, "month": 16, "quarter": 6}
+
+
+@app.get("/tasks/gantt")
+@login_required
+def tasks_gantt():
+    scope = _task_scope(get_db(), current_user())
+    today = datetime.now(APP_TIMEZONE).date()
+    zoom = request.args.get("zoom")
+    if zoom in GANTT_DAY_WIDTHS:
+        session["tasks_gantt_zoom"] = zoom
+    else:
+        zoom = session.get("tasks_gantt_zoom", "month")
+        zoom = zoom if zoom in GANTT_DAY_WIDTHS else "month"
+    day_width = GANTT_DAY_WIDTHS[zoom]
+
+    def span(item):
+        """First and last day of a task. A task with one date takes that single day."""
+        days = []
+        for value in (item["start_date"], item["due_date"]):
+            try:
+                days.append(date.fromisoformat(value))
+            except (TypeError, ValueError):
+                pass
+        return (min(days), max(days)) if days else None
+
+    def shown(item):
+        return scope["show_closed"] or item["status"] != "Complete"
+
+    def order(item):
+        when = span(item)
+        return (when is None, when[0] if when else today, item["id"])
+
+    listed = []
+    for item in sorted(filter(shown, scope["top"]), key=order):
+        listed.append((item, False))
+        listed.extend((sub, True) for sub in sorted(filter(shown, item["subtasks"]), key=order))
+
+    # The timeline covers every dated task plus some room either side, but never more
+    # than a year back or two years ahead, so one stray date cannot stretch it.
+    spans = [when for when in (span(item) for item, _ in listed) if when]
+    earliest, latest = today - timedelta(days=365), today + timedelta(days=730)
+    first = max(min([when[0] for when in spans] + [today]) - timedelta(days=14), earliest)
+    last = min(max([when[1] for when in spans] + [today]) + timedelta(days=28), latest)
+    last = max(last, first + timedelta(days=1600 // day_width))
+    first -= timedelta(days=(first.weekday() + 1) % 7)   # back to Sunday
+    last += timedelta(days=(5 - last.weekday()) % 7)     # on to Saturday
+    days = (last - first).days + 1
+
+    rows = []
+    for item, is_sub in listed:
+        when, bar = span(item), None
+        if when and when[1] >= first and when[0] <= last:
+            start, end = max(when[0], first), min(when[1], last)
+            label = f"{when[0].day} {when[0].strftime('%b')}"
+            if when[1] != when[0]:
+                label += f" to {when[1].day} {when[1].strftime('%b')}"
+            bar = {"start": (start - first).days, "days": (end - start).days + 1, "label": label,
+                   # Which dates the task has, so moving a one-date task keeps it one-date; a bar
+                   # cut off by the edge of the timeline cannot be dragged.
+                   "has": "both" if item["start_date"] and item["due_date"] else "start" if item["start_date"] else "due",
+                   "clipped": (start, end) != when}
+        rows.append({"task": item, "sub": is_sub, "bar": bar, "dated": bool(when)})
+
+    months, cursor = [], first
+    while cursor <= last:
+        following = (cursor.replace(day=1) + timedelta(days=32)).replace(day=1)
+        length = (min(following - timedelta(days=1), last) - cursor).days + 1
+        months.append({"days": length, "label": cursor.strftime("%b %Y") if length * day_width >= 64 else ""})
+        cursor = following
+    weeks = []
+    for offset in range(0, days, 7):
+        start = first + timedelta(days=offset)
+        end = start + timedelta(days=6)
+        label = f"W{int(start.strftime('%U'))} {start.day}–{end.day}" if day_width >= 16 else str(start.day)
+        weeks.append({"label": label, "current": start <= today <= end})
+    day_cells = []
+    if zoom == "week":   # wide enough to name every day
+        for offset in range(days):
+            day = first + timedelta(days=offset)
+            day_cells.append({"label": f"{day.strftime('%a')[0]} {day.day}", "off": day.weekday() >= 5, "today": day == today})
+    return _tasks_page(
+        "tasks_gantt.html", scope, view="gantt", month=None, rows=rows, zoom=zoom, day_width=day_width, day_cells=day_cells,
+        days=days, months=months, weeks=weeks, today_offset=(today - first).days, first_day=first.isoformat(),
+        range_label=f"{first.day} {first.strftime('%B %Y')} to {last.day} {last.strftime('%B %Y')}",
+        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if not row["bar"]),
+    )
+
+
 @app.post("/tasks/new")
 @login_required
 def task_create():
@@ -3991,6 +4616,9 @@ def task_detail(task_id):
                   (now_str(), user["id"], task_id)).rowcount:
         db.commit()
         _live_touch()
+    # Picks up links from descriptions written before links were saved, or set when the task was created.
+    if _keep_task_links(db, task_id, task["description"]):
+        db.commit()
     parent = db.execute("SELECT id, title FROM work_tasks WHERE id=?", (task["parent_id"],)).fetchone() if task["parent_id"] else None
     task["subtasks"] = _task_views(db, db.execute("SELECT * FROM work_tasks WHERE parent_id=? ORDER BY id", (task_id,)).fetchall())
     days = []
@@ -4014,7 +4642,110 @@ def task_detail(task_id):
         statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(),
         task_projects=_visible_project_options(db, user, task["project"]),
         can_delete=user["role"] == "manager" or task["created_by"] == user["id"],
+        files=_task_file_views(db, task, user), time=_task_time_view(db, task_id, user),
+        links=db.execute("SELECT id, url, label FROM work_task_links WHERE task_id=? AND removed_at IS NULL ORDER BY id",
+                         (task_id,)).fetchall(),
+        file_accept=",".join(sorted(TASK_FILE_TYPES)), file_max_mb=TASK_FILE_MAX_BYTES // (1024 * 1024),
     )
+
+
+@app.post("/tasks/<int:task_id>/files")
+@login_required
+def task_file_upload(task_id):
+    _check_task_token()
+    db, user = get_db(), current_user()
+    _get_work_task(db, task_id)
+    folder = _task_file_dir()
+    os.makedirs(folder, exist_ok=True)
+    have = db.execute("SELECT count(*) FROM work_task_files WHERE task_id=?", (task_id,)).fetchone()[0]
+    saved, problems = [], []
+    for upload in request.files.getlist("files"):
+        name = os.path.basename((upload.filename or "").replace("\\", "/")).strip()[:150]
+        if not name:
+            continue
+        extension = os.path.splitext(name)[1].lower()
+        if extension not in TASK_FILE_TYPES:
+            problems.append(f"{name}: this file type is not supported.")
+            continue
+        if have + len(saved) >= TASK_FILE_MAX_PER_TASK:
+            problems.append(f"{name}: a task can hold up to {TASK_FILE_MAX_PER_TASK} attachments.")
+            continue
+        data = upload.read(TASK_FILE_MAX_BYTES + 1)
+        if not data:
+            problems.append(f"{name}: the file is empty.")
+            continue
+        if len(data) > TASK_FILE_MAX_BYTES:
+            problems.append(f"{name}: files can be up to {TASK_FILE_MAX_BYTES // (1024 * 1024)} MB.")
+            continue
+        stored = uuid.uuid4().hex + extension
+        with open(os.path.join(folder, stored), "wb") as handle:
+            handle.write(data)
+        db.execute(
+            "INSERT INTO work_task_files (task_id,user_id,original_name,stored_name,size,created_at) VALUES (?,?,?,?,?,?)",
+            (task_id, user["id"], name, stored, len(data), now_str()))
+        _log_task_event(db, task_id, f"attached {name}")
+        saved.append(name)
+    if saved:
+        db.execute("UPDATE work_tasks SET updated_at=? WHERE id=?", (now_str(), task_id))
+        db.commit()
+    for problem in problems:
+        flash(problem, "error")
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(saved=len(saved), problems=problems)
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.get("/tasks/files/<int:file_id>")
+@login_required
+def task_file(file_id):
+    row = get_db().execute("SELECT * FROM work_task_files WHERE id=?", (file_id,)).fetchone()
+    if not row:
+        abort(404)
+    path = os.path.join(_task_file_dir(), row["stored_name"])
+    if not os.path.isfile(path):
+        abort(404)
+    extension = os.path.splitext(row["stored_name"])[1].lower()
+    mime, kind = TASK_FILE_TYPES.get(extension, ("application/octet-stream", "File"))
+    # Only images and PDFs open in the browser; everything else downloads.
+    inline = kind in ("Image", "PDF") and "download" not in request.args
+    response = send_file(path, mimetype=mime, as_attachment=not inline, download_name=row["original_name"])
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response
+
+
+@app.post("/tasks/links/<int:link_id>/delete")
+@login_required
+def task_link_delete(link_id):
+    _check_task_token()
+    db = get_db()
+    row = db.execute("SELECT * FROM work_task_links WHERE id=? AND removed_at IS NULL", (link_id,)).fetchone()
+    if not row:
+        abort(404)
+    _get_work_task(db, row["task_id"])
+    db.execute("UPDATE work_task_links SET removed_at=? WHERE id=?", (now_str(), link_id))
+    _log_task_event(db, row["task_id"], f"removed link {row['label'][:120]}")
+    db.commit()
+    return redirect(url_for("task_detail", task_id=row["task_id"]))
+
+
+@app.post("/tasks/files/<int:file_id>/delete")
+@login_required
+def task_file_delete(file_id):
+    _check_task_token()
+    db, user = get_db(), current_user()
+    row = db.execute("SELECT * FROM work_task_files WHERE id=?", (file_id,)).fetchone()
+    if not row:
+        abort(404)
+    task = _get_work_task(db, row["task_id"])
+    if user["role"] != "manager" and user["id"] not in (row["user_id"], task["created_by"]):
+        flash("Only a manager, the task's creator or the person who attached a file can remove it.", "error")
+        return redirect(url_for("task_detail", task_id=task["id"]))
+    db.execute("DELETE FROM work_task_files WHERE id=?", (file_id,))
+    _log_task_event(db, task["id"], f"removed attachment {row['original_name']}")
+    db.commit()
+    _remove_task_files([row["stored_name"]])
+    return redirect(url_for("task_detail", task_id=task["id"]))
 
 
 @app.post("/tasks/<int:task_id>/update")
@@ -4060,6 +4791,7 @@ def task_update(task_id):
         _log_task_event(db, task_id, f"renamed this task to {title}")
     if description != (task["description"] or ""):
         _log_task_event(db, task_id, "updated the description")
+        _keep_task_links(db, task_id, description, task["description"] or "")
     if priority != task["priority"]:
         _log_task_event(db, task_id, f"set priority to {priority}" if priority else "cleared the priority")
     if start != task["start_date"]:
@@ -4101,6 +4833,69 @@ def task_update(task_id):
     return here
 
 
+@app.post("/tasks/<int:task_id>/dates")
+@login_required
+def task_set_dates(task_id):
+    """Save the dates of a task after its bar was dragged on the Gantt."""
+    _check_task_token()
+    db = get_db()
+    task = _get_work_task(db, task_id)
+    try:
+        start = date.fromisoformat(request.form["start_date"]).isoformat() if request.form.get("start_date") else None
+        due = date.fromisoformat(request.form["due_date"]).isoformat() if request.form.get("due_date") else None
+    except ValueError:
+        abort(400)
+    if start and due and due < start:
+        abort(400)
+    if start != task["start_date"]:
+        _log_task_event(db, task_id, f"set start date to {start}" if start else "cleared the start date")
+    if due != task["due_date"]:
+        _log_task_event(db, task_id, f"set due date to {due}" if due else "cleared the due date")
+    if (start, due) != (task["start_date"], task["due_date"]):
+        db.execute("UPDATE work_tasks SET start_date=?, due_date=?, updated_at=? WHERE id=?", (start, due, now_str(), task_id))
+        db.commit()
+        _live_touch()
+    return "", 204
+
+
+@app.post("/tasks/<int:task_id>/timer/start")
+@login_required
+def task_timer_start(task_id):
+    _check_task_token()
+    db, user = get_db(), current_user()
+    _get_work_task(db, task_id)
+    _stop_running_timer(db, user)
+    db.execute("INSERT INTO work_task_time (task_id, user_id, started_at) VALUES (?,?,?)", (task_id, user["id"], now_str()))
+    db.commit()
+    return redirect(_tasks_back(url_for("task_detail", task_id=task_id)))
+
+
+@app.post("/tasks/timer/stop")
+@login_required
+def task_timer_stop():
+    _check_task_token()
+    db = get_db()
+    timer = _stop_running_timer(db, current_user())
+    db.commit()
+    return redirect(_tasks_back(url_for("task_detail", task_id=timer["task_id"]) if timer else url_for("tasks_list")))
+
+
+@app.post("/tasks/time/<int:entry_id>/delete")
+@login_required
+def task_time_delete(entry_id):
+    _check_task_token()
+    db, user = get_db(), current_user()
+    entry = db.execute("SELECT * FROM work_task_time WHERE id=?", (entry_id,)).fetchone()
+    if not entry:
+        abort(404)
+    if entry["ended_at"] is None or (user["role"] != "manager" and entry["user_id"] != user["id"]):
+        abort(403)
+    db.execute("DELETE FROM work_task_time WHERE id=?", (entry_id,))
+    _log_task_event(db, entry["task_id"], f"removed a time entry of {_duration_label(entry['seconds'])}")
+    db.commit()
+    return redirect(url_for("task_detail", task_id=entry["task_id"]))
+
+
 @app.post("/tasks/<int:task_id>/status")
 @login_required
 def task_set_status(task_id):
@@ -4137,8 +4932,12 @@ def task_delete(task_id):
     if user["role"] != "manager" and task["created_by"] != user["id"]:
         flash("Only a manager or the person who created a task can delete it.", "error")
         return redirect(url_for("task_detail", task_id=task_id))
+    stored = [r["stored_name"] for r in db.execute(
+        """SELECT stored_name FROM work_task_files
+           WHERE task_id=? OR task_id IN (SELECT id FROM work_tasks WHERE parent_id=?)""", (task_id, task_id))]
     db.execute("DELETE FROM work_tasks WHERE id=?", (task_id,))
     db.commit()
+    _remove_task_files(stored)
     log_activity("Deleted task", "task", task_id, task["title"])
     flash("Task deleted.", "success")
     return redirect(url_for("task_detail", task_id=task["parent_id"]) if task["parent_id"] else url_for("tasks_list"))
@@ -4181,6 +4980,8 @@ def _init_notifications(db):
         )
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read_at, id)")
+    # lead_id is set on notifications about a lead (a follow-up handed to a manager).
+    _add_cols(db, "notifications", [("lead_id", "INTEGER REFERENCES leads(id) ON DELETE CASCADE")])
 
 
 def _notify_task_assigned(db, user_id, task_id, task_title):
@@ -4196,8 +4997,10 @@ def _notify_task_assigned(db, user_id, task_id, task_title):
 
 def _live_counts(db, user_id):
     chat = db.execute("SELECT COUNT(*) FROM chat_messages WHERE recipient_id=? AND is_read=0", (user_id,)).fetchone()[0]
-    tasks = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL", (user_id,)).fetchone()[0]
-    return {"chat": chat, "tasks": tasks, "all": chat + tasks}
+    tasks, leads = db.execute(
+        """SELECT COALESCE(SUM(lead_id IS NULL), 0), COALESCE(SUM(lead_id IS NOT NULL), 0)
+           FROM notifications WHERE user_id=? AND read_at IS NULL""", (user_id,)).fetchone()
+    return {"chat": chat, "tasks": tasks, "leads": leads, "all": chat + tasks}
 
 
 def _live_state(db, user_id, chat_after, note_after):
@@ -4215,9 +5018,9 @@ def _live_state(db, user_id, chat_after, note_after):
         ]
     if note_after >= 0:
         state["notes"] = [
-            {"id": r[0], "task": r[1], "title": r[2], "body": r[3]}
+            {"id": r[0], "task": r[1], "title": r[2], "body": r[3], "lead": r[4]}
             for r in db.execute(
-                """SELECT id, task_id, title, body FROM notifications
+                """SELECT id, task_id, title, body, lead_id FROM notifications
                    WHERE user_id=? AND id>? AND read_at IS NULL ORDER BY id LIMIT 20""", (user_id, note_after))
         ]
     state["chat_cursor"] = db.execute("SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE recipient_id=?", (user_id,)).fetchone()[0]
@@ -4283,7 +5086,7 @@ def live_socket(ws):
             if _live_version != seen_version or now - checked >= LIVE_CHECK_SECONDS:
                 seen_version, checked = _live_version, now
                 state = _live_state(connection, user_id, chat_after, note_after)
-                fingerprint = (state["chat"], state["tasks"], state["chat_cursor"], state["note_cursor"])
+                fingerprint = (state["chat"], state["tasks"], state["leads"], state["chat_cursor"], state["note_cursor"])
                 if fingerprint != sent:
                     sent = fingerprint
                     chat_after, note_after = state["chat_cursor"], state["note_cursor"]

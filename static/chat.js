@@ -143,7 +143,12 @@
       }
     });
     form.elements.body.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) form.requestSubmit();
+      // Enter sends and Shift+Enter starts a new line. On touch keyboards there is no
+      // Shift+Enter, so Enter keeps adding a line there and the Send button sends.
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+      if (!(event.ctrlKey || event.metaKey) && matchMedia('(pointer: coarse)').matches) return;
+      event.preventDefault();
+      form.requestSubmit();
     });
 
     const toggle = workspace.querySelector('.profile-toggle');

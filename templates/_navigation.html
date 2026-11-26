@@ -64,11 +64,11 @@
       {% if key == current.category %}
       <button class="rail-button" type="button" data-category="{{ key }}" title="{{ label }}"
               aria-label="{{ label }}" aria-controls="modules-{{ key }}" aria-expanded="true">
-        {{ icon(key) }}{% if key == 'workspace' %}<span class="live-badge is-rail" data-live-badge="all" aria-label="{{ live_counts.all }} unread"{% if not live_counts.all %} hidden{% endif %}>{{ live_counts.all }}</span>{% endif %}
+        {{ icon(key) }}{% set rail_badge = {'workspace': 'all', 'sales': 'leads'}.get(key) %}{% if rail_badge %}<span class="live-badge is-rail" data-live-badge="{{ rail_badge }}" aria-label="{{ live_counts[rail_badge] }} unread"{% if not live_counts[rail_badge] %} hidden{% endif %}>{{ live_counts[rail_badge] }}</span>{% endif %}
       </button>
       {% else %}
       <a class="rail-button" data-category="{{ key }}" href="{{ url_for(modules[0][0]) }}"
-         title="{{ label }}" aria-label="{{ label }}">{{ icon(key) }}{% if key == 'workspace' %}<span class="live-badge is-rail" data-live-badge="all" aria-label="{{ live_counts.all }} unread"{% if not live_counts.all %} hidden{% endif %}>{{ live_counts.all }}</span>{% endif %}</a>
+         title="{{ label }}" aria-label="{{ label }}">{{ icon(key) }}{% set rail_badge = {'workspace': 'all', 'sales': 'leads'}.get(key) %}{% if rail_badge %}<span class="live-badge is-rail" data-live-badge="{{ rail_badge }}" aria-label="{{ live_counts[rail_badge] }} unread"{% if not live_counts[rail_badge] %} hidden{% endif %}>{{ live_counts[rail_badge] }}</span>{% endif %}</a>
       {% endif %}
       {% endfor %}
     </div>
@@ -86,7 +86,7 @@
       {% for endpoint, title, glyph, children in modules %}
       <a class="module-link" href="{{ url_for(endpoint) }}"{% if request.endpoint == endpoint %} aria-current="page"{% elif request.endpoint in children %} aria-current="location"{% endif %}>
         {{ icon(glyph) }}<span>{{ title }}</span>
-        {% set badge = {'chat': 'chat', 'tasks_list': 'tasks'}.get(endpoint) %}
+        {% set badge = {'chat': 'chat', 'tasks_list': 'tasks', 'leads_list': 'leads'}.get(endpoint) %}
         {% if badge %}<span class="live-badge" data-live-badge="{{ badge }}" aria-label="{{ live_counts[badge] }} unread"{% if not live_counts[badge] %} hidden{% endif %}>{{ live_counts[badge] }}</span>{% endif %}
       </a>
       {% endfor %}

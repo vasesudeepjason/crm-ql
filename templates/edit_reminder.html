@@ -1,11 +1,40 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit reminder' if editing else 'Add reminder' }} · Lead Desk{% endblock %}
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='reminders.css') }}?v=2">
+<script src="{{ url_for('static', filename='reminders.js') }}?v=2" defer></script>
+{% endblock %}
 {% block content %}
-<header class="page-header"><div><h1 class="page-title">{{ 'Edit reminder' if editing else 'Add reminder' }}</h1></div></header>
-<form class="form-card planning-form" method="post">
-  <div class="form-group"><label for="title">Reminder</label><input id="title" name="title" placeholder="What do you want to remember?" required value="{{ title }}"></div>
+<turbo-frame id="reminder-form">
+<header class="page-header reminder-form-head"><div><h1 class="page-title">{{ 'Edit reminder' if editing else 'Add reminder' }}</h1></div></header>
+<form class="form-card planning-form reminder-form" method="post" action="{{ request.full_path }}" data-reminder-form>
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+  <div class="form-group"><label for="title">Reminder</label><input id="title" name="title" maxlength="300" placeholder="What do you want to remember?" required value="{{ values.title }}"></div>
   <div class="form-group"><label for="remind-at">Date and time (IST)</label><input id="remind-at" name="remind_at" type="datetime-local" value="{{ when }}" required></div>
+  <div class="form-group"><label for="repeat">Repeats</label>
+    <select id="repeat" name="repeat" data-repeat>
+      {% for value, label in presets %}<option value="{{ value }}"{% if value == values.repeat %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <fieldset class="reminder-custom" data-repeat-custom>
+    <legend>Custom repeat</legend>
+    <div class="reminder-every">
+      <label for="repeat-every">Every</label>
+      <input id="repeat-every" name="repeat_every" type="number" min="1" max="365" value="{{ values.every }}" inputmode="numeric">
+      <select name="repeat_unit" aria-label="Repeat unit" data-repeat-unit>
+        {% for value, label in units %}<option value="{{ value }}"{% if value == values.unit %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="reminder-weekdays" data-repeat-weekdays role="group" aria-label="On these days">
+      {% for number, name in weekdays %}
+      <label><input type="checkbox" name="repeat_days" value="{{ number }}"{% if number in values.days %} checked{% endif %}><span>{{ name }}</span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <div class="form-group" data-repeat-until><label for="repeat-until">Stop repeating after (optional)</label><input id="repeat-until" name="repeat_until" type="date" value="{{ values.until }}"></div>
+  <div class="form-group"><label for="notes">Notes (optional)</label><textarea id="notes" name="notes" rows="3" maxlength="2000" placeholder="Details, a phone number, a link…">{{ values.notes }}</textarea></div>
   <p class="page-sub">Only you can see this reminder. Due reminders appear while the CRM is open.</p>
-  <div class="planning-actions"><button class="btn btn-primary">Save reminder</button><a href="{{ url_for('reminders',day=day.isoformat()) }}">Cancel</a></div>
+  <div class="planning-actions"><button class="btn btn-primary">Save reminder</button><a href="{{ url_for('reminders',day=day.isoformat()) }}" data-turbo-frame="_top" data-reminder-close>Cancel</a></div>
 </form>
+</turbo-frame>
 {% endblock %}

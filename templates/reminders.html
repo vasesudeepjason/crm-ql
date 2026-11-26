@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}My reminders · Lead Desk{% endblock %}
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='reminders.css') }}?v=2">
+<script src="{{ url_for('static', filename='reminders.js') }}?v=2" defer></script>
+{% endblock %}
 {% block content %}
 <header class="page-header">
   <div><h1 class="page-title">My reminders</h1><p class="page-sub">Your private calendar · India Standard Time</p></div>
-  <a class="btn btn-primary" href="{{ url_for('edit_reminder',day=day.isoformat()) }}">Add reminder</a>
+  <a class="btn btn-primary" href="{{ url_for('edit_reminder',day=day.isoformat()) }}" data-turbo-frame="reminder-form" data-reminder-open>Add reminder</a>
 </header>
 <div class="calendar-layout">
   <section class="calendar-panel" aria-label="Monthly calendar">
@@ -22,22 +26,39 @@
         <a class="calendar-day{% if key == today %} is-today{% endif %}" href="{{ url_for('reminders',day=key) }}"
            aria-label="{{ d.strftime('%B %d, %Y') }}, {{ events|length }} reminders"{% if n == day.day %} aria-current="date"{% endif %}>
           <span class="date-number">{{ n }}</span>
-          {% if events %}<span class="calendar-event">{{ events[0].title }}</span>{% if events|length > 1 %}<small>+{{ events|length - 1 }}</small>{% endif %}{% endif %}
+          {% if events %}<span class="calendar-event{% if events[0].completed %} is-complete{% endif %}">{{ events[0].title }}</span>{% if events|length > 1 %}<small>+{{ events|length - 1 }}</small>{% endif %}{% endif %}
         </a>{% else %}<span class="calendar-blank"></span>{% endif %}
       {% endfor %}{% endfor %}
     </div>
   </section>
   <aside class="day-agenda">
     <h2>{{ day.strftime('%A, %b') }} {{ day.day }}</h2>
-    {% for item in by_day.get(day.isoformat(),[]) %}<article class="agenda-item{% if item.completed %} is-complete{% endif %}">
-      <time datetime="{{ item.remind_at }}">{{ item.remind_at[11:] }} IST</time>
-      <a class="agenda-title" href="{{ url_for('edit_reminder',reminder_id=item.id,day=day.isoformat()) }}">{{ item.title }}</a>
-      <form method="post" action="{{ url_for('update_reminder',reminder_id=item.id) }}">
+    {% for item in by_day.get(day.isoformat(),[]) %}<article class="agenda-item{% if item.completed %} is-complete{% endif %}{% if item.due %} is-due{% endif %}">
+      <p class="agenda-meta"><time datetime="{{ item.remind_at }}">{{ item.time }} IST</time>
+        {% if item.repeat %}<span class="agenda-tag">↻ {{ item.repeat }}</span>{% endif %}
+        {% if item.snoozed %}<span class="agenda-tag">Snoozed</span>{% elif item.due %}<span class="agenda-tag is-due">Due</span>{% endif %}</p>
+      <a class="agenda-title" href="{{ url_for('edit_reminder',reminder_id=item.id,day=day.isoformat()) }}" data-turbo-frame="reminder-form" data-reminder-open>{{ item.title }}</a>
+      {% if item.notes %}<p class="agenda-notes">{{ item.notes }}</p>{% endif %}
+      {% if item.upcoming %}
+      <p class="agenda-upcoming">Upcoming repeat. It can be marked done once the earlier one is.</p>
+      {% else %}
+      <form method="post" action="{{ url_for('update_reminder',reminder_id=item.id) }}" class="agenda-actions">
         <button class="btn btn-outline btn-sm" name="action" value="{{ 'reopen' if item.completed else 'complete' }}">{{ 'Reopen' if item.completed else 'Mark done' }}</button>
-        <button class="btn btn-danger btn-sm" name="action" value="delete" onclick="return confirm('Delete this reminder?')">Delete</button>
+        {% if item.due and not item.snoozed %}
+        <button class="btn btn-outline btn-sm" name="action" value="snooze-hour">Snooze 1 hour</button>
+        <button class="btn btn-outline btn-sm" name="action" value="snooze-tomorrow">Tomorrow 9:00</button>
+        {% endif %}
+        <button class="btn btn-danger btn-sm" name="action" value="delete" onclick="return confirm('{{ 'Delete this reminder and all its future repeats?' if item.repeat else 'Delete this reminder?' }}')">Delete</button>
       </form>
+      {% endif %}
     </article>{% else %}<p class="planner-empty">No reminders for this day.</p>{% endfor %}
-    <a class="agenda-add" href="{{ url_for('edit_reminder',day=day.isoformat()) }}">+ Add to this day</a>
+    <a class="agenda-add" href="{{ url_for('edit_reminder',day=day.isoformat()) }}" data-turbo-frame="reminder-form" data-reminder-open>+ Add to this day</a>
   </aside>
 </div>
+<dialog class="reminder-dialog" id="reminderDialog" aria-label="Reminder">
+  <button type="button" class="reminder-dialog-close" data-reminder-close aria-label="Close">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+  </button>
+  <turbo-frame id="reminder-form"></turbo-frame>
+</dialog>
 {% endblock %}

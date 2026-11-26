@@ -7,6 +7,8 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="48x48">
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+<link rel="manifest" href="{{ url_for('static', filename='app.webmanifest') }}">
+<meta name="application-name" content="Quantumloop CRM">
 <meta name="turbo-cache-control" content="no-cache">
 <meta name="turbo-prefetch" content="false">
 <meta name="turbo-refresh-scroll" content="preserve">
@@ -26,12 +28,12 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=27" data-turbo-track="reload">
 <link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}?v=5" data-turbo-track="reload">
 <link rel="stylesheet" href="{{ url_for('static', filename='interface.css') }}?v=16" data-turbo-track="reload">
-<link rel="stylesheet" href="{{ url_for('static', filename='live.css') }}?v=1" data-turbo-track="reload">
+<link rel="stylesheet" href="{{ url_for('static', filename='live.css') }}?v=2" data-turbo-track="reload">
 {% block page_styles %}{% endblock %}
 <script src="{{ url_for('static', filename='vendor/turbo-8.0.23/turbo.es2017-esm.js') }}" type="module" data-turbo-track="reload"></script>
 <script src="{{ url_for('static', filename='navigation.js') }}?v=3" defer data-turbo-track="reload"></script>
 <script src="{{ url_for('static', filename='reminder-notice.js') }}?v=2" defer></script>
-<script src="{{ url_for('static', filename='live.js') }}?v=3" defer data-turbo-track="reload"></script>
+<script src="{{ url_for('static', filename='live.js') }}?v=5" defer data-turbo-track="reload"></script>
 </head>
 <body>
 <div class="shell crm-shell">
@@ -64,9 +66,9 @@
     {% block content %}{% endblock %}
   </main>
 </div>
-<div id="live-toasts" class="live-toasts" data-turbo-permanent role="region" aria-label="Notifications" aria-live="polite"
+<div id="live-toasts" class="live-toasts" data-turbo-permanent data-icon="{{ url_for('static', filename='apple-touch-icon.png') }}" role="region" aria-label="Notifications" aria-live="polite"
      data-user="{{ current_user.id }}" data-state-url="{{ url_for('live_state') }}" data-socket-url="{{ '/live/socket' if live_socket_enabled else '' }}"
-     data-chat-url="{{ url_for('chat') }}" data-task-url="{{ url_for('tasks_list') }}"></div>
+     data-chat-url="{{ url_for('chat') }}" data-task-url="{{ url_for('tasks_list') }}" data-lead-url="{{ url_for('leads_list') }}"></div>
 
 </body>
 </html>

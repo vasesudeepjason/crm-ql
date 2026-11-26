@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Leads · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=6">
+<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=7">
 <script src="{{ url_for('static', filename='records.js') }}?v=1" defer></script>
 {% endblock %}
 {% block main_class %}rc-page{% endblock %}
@@ -40,6 +40,10 @@
   <nav class="rc-pills" aria-label="Filter by stage">
     <a class="rc-pill{% if not stage_filter %} is-on{% endif %}"{% if not stage_filter %} aria-current="true"{% endif %}
        href="{{ url_for('leads_list', q=search or None, interest=interest_filter or None, tag=tag_filter or None) }}">All <b>{{ total_all }}</b></a>
+    {% if handed_to_me or mine_filter %}
+    <a class="rc-pill rc-pill-mine{% if mine_filter %} is-on{% endif %}"{% if mine_filter %} aria-current="true"{% endif %}
+       href="{{ url_for('leads_list', mine=None if mine_filter else 1) }}">Handed to me <b>{{ handed_to_me }}</b></a>
+    {% endif %}
     {% for stage in stages %}
     <a class="rc-pill rc-s-{{ stage|slug }}{% if stage == stage_filter %} is-on{% endif %}"{% if stage == stage_filter %} aria-current="true"{% endif %}
        href="{{ url_for('leads_list', stage=stage, q=search or None, interest=interest_filter or None, tag=tag_filter or None) }}"><i aria-hidden="true"></i>{{ stage }} <b>{{ stage_counts[stage] }}</b></a>
@@ -95,7 +99,7 @@
         <td class="c-interest">{% if lead.interest_level %}<span class="rc-interest rc-in-{{ lead.interest_level|lower }}">{{ lead.interest_level }}</span>{% else %}<span class="rc-none">—</span>{% endif %}</td>
         <td class="c-priority">{{ flag(lead.priority) }}</td>
         <td class="c-budget">{{ lead.budget_range or '—' }}</td>
-        <td class="c-follow">{% if lead.follow %}<span class="rc-follow{% if lead.follow.overdue %} is-overdue{% endif %}" title="{{ lead.follow_up_date }}">{{ lead.follow.label }}</span>{% else %}<span class="rc-none">—</span>{% endif %}</td>
+        <td class="c-follow">{% if lead.follow %}<span class="rc-follow{% if lead.follow.overdue %} is-overdue{% endif %}" title="{{ lead.follow_up_date }}">{{ lead.follow.label }}</span>{% else %}<span class="rc-none">—</span>{% endif %}{% if lead.followup_manager_id %} <span class="rc-chip is-accent" title="Follow-up handed to {{ lead.followup_manager_name or 'a manager' }}">{{ 'For you' if lead.followup_manager_id == user.id else 'For ' ~ (lead.followup_manager_name or 'manager') }}</span>{% endif %}</td>
         <td class="c-owner">
           {% if lead.owner_id == user.id %}<span class="rc-owner"><span class="rc-avatar is-small is-self" aria-hidden="true">{{ lead.owner_initials }}</span>You</span>
           {% elif lead.owner_name %}<span class="rc-owner"><span class="rc-avatar is-small" aria-hidden="true">{{ lead.owner_initials }}</span>{{ lead.owner_name }}</span>

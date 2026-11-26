@@ -48,13 +48,14 @@
     var prefix = '';
     if (counts.chat > 0) prefix = '(' + counts.chat + ') New unread message' + (counts.chat === 1 ? '' : 's') + ' · ';
     else if (counts.tasks > 0) prefix = '(' + counts.tasks + ') New task' + (counts.tasks === 1 ? '' : 's') + ' assigned · ';
+    else if (counts.leads > 0) prefix = '(' + counts.leads + ') New follow-up request' + (counts.leads === 1 ? '' : 's') + ' · ';
     var wanted = prefix + baseTitle;
     if (document.title !== wanted) document.title = wanted;
   }
 
   function rememberTitle() {
     // Each page arrives with its own plain title; keep it so the unread prefix can be re-applied.
-    baseTitle = document.title.replace(/^\(\d+\) New (unread messages?|tasks? assigned) · /, '');
+    baseTitle = document.title.replace(/^\(\d+\) New (unread messages?|tasks? assigned|follow-up requests?) · /, '');
     render();
   }
 
@@ -96,6 +97,61 @@
     item.addEventListener('mouseleave', function () { item.liveArm(3000); });
   }
 
+  // ---- desktop notifications, for when the person is in another tab or another app ----
+  function desktop(title, body, href, tag) {
+    var area = host();
+    if (!area || attending() || !('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+      // The tag stops several open tabs from each raising the same notification.
+      var note = new Notification(title, { body: body || '', tag: tag, icon: area.dataset.icon });
+      note.onclick = function () {
+        window.focus();
+        note.close();
+        if (window.Turbo) window.Turbo.visit(href); else location.href = href;
+      };
+    } catch (error) { /* some browsers only allow these from a service worker: the toast still shows */ }
+  }
+
+  // Browsers only allow asking for permission after a click, so offer it once as a toast.
+  function offerDesktop() {
+    var area = host();
+    var asked = false;
+    try { asked = !!localStorage.getItem('live-desktop-asked'); } catch (error) { /* ask again next time */ }
+    if (!area || asked || !('Notification' in window) || Notification.permission !== 'default') return;
+    if (area.querySelector('.is-offer')) return;
+
+    var item = document.createElement('div');
+    item.className = 'live-toast is-offer';
+    var copy = document.createElement('div');
+    copy.className = 'live-toast-body';
+    var heading = document.createElement('strong');
+    heading.textContent = 'Turn on desktop notifications?';
+    var text = document.createElement('span');
+    text.textContent = 'Get new messages and tasks even when you are in another tab or app.';
+    var allow = document.createElement('button');
+    allow.type = 'button';
+    allow.className = 'btn btn-primary btn-sm live-toast-action';
+    allow.textContent = 'Turn on';
+    copy.append(heading, text, allow);
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'live-toast-close';
+    close.setAttribute('aria-label', 'Not now');
+    close.textContent = '×';
+    item.append(copy, close);
+    area.append(item);
+
+    function done() {
+      try { localStorage.setItem('live-desktop-asked', '1'); } catch (error) { /* not essential */ }
+      item.remove();
+    }
+    allow.addEventListener('click', function () {
+      var result = Notification.requestPermission(done);
+      if (result && result.then) result.then(done, done);
+    });
+    close.addEventListener('click', done);
+  }
+
   function armWaitingToasts() {
     document.querySelectorAll('.live-toast').forEach(function (item) { if (item.liveArm) item.liveArm(); });
   }
@@ -114,18 +170,23 @@
     var area = host();
     var first = cursors === null;
     var before = counts;
-    counts = { chat: state.chat, tasks: state.tasks, all: state.all };
+    counts = { chat: state.chat, tasks: state.tasks, leads: state.leads || 0, all: state.all };
     cursors = { chat: state.chat_cursor, note: state.note_cursor };
     saveCursors();
 
     if (!first && area) {
       (state.chats || []).forEach(function (message) {
         if (!viewingChatWith(message.from)) {
-          toast('chat', message.name, message.body, area.dataset.chatUrl + '/' + message.from);
+          var chatLink = area.dataset.chatUrl + '/' + message.from;
+          toast('chat', message.name, message.body, chatLink);
+          desktop(message.name, message.body, chatLink, 'chat-' + message.id);
         }
       });
       (state.notes || []).forEach(function (note) {
-        toast('task', note.title, note.body, note.task ? area.dataset.taskUrl + '/' + note.task : area.dataset.taskUrl);
+        var taskLink = note.lead ? area.dataset.leadUrl + '/' + note.lead
+          : note.task ? area.dataset.taskUrl + '/' + note.task : area.dataset.taskUrl;
+        toast('task', note.title, note.body, taskLink);
+        desktop(note.title, note.body, taskLink, 'note-' + note.id);
       });
     }
     if ((state.chats && state.chats.length) || !before || before.chat !== counts.chat) {
@@ -218,7 +279,7 @@
     }
   }
 
-  document.addEventListener('turbo:load', function () { rememberTitle(); connect(); });
+  document.addEventListener('turbo:load', function () { rememberTitle(); connect(); offerDesktop(); });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) return;
     if (polling) poll();
@@ -231,4 +292,5 @@
   window.addEventListener('pageshow', connect);
   rememberTitle();
   connect();
+  offerDesktop();
 })();

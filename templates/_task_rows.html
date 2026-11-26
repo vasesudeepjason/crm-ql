@@ -27,6 +27,11 @@
     {% if task.description %}
     <svg class="tk-has-notes" viewBox="0 0 16 16" width="14" height="14" aria-label="Has a description" role="img" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><path d="M3 5h10M3 8h10M3 11h6"/></svg>
     {% endif %}
+    {% if task.tracked or task.timer_running %}
+    <span class="tk-tracked{% if task.timer_running %} is-running{% endif %}" title="{{ 'Timer running' if task.timer_running else 'Time tracked' }}">
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><circle cx="8" cy="9" r="5"/><path d="M8 6.500V9l1.600 1M6.500 2h3"/></svg>{{ task.tracked or 'Running' }}{% if task.tracked and task.timer_running %} · running{% endif %}
+    </span>
+    {% endif %}
     {% if show_status %}<span class="tk-badge tk-badge-sm tk-st-{{ task.status|slug }}">{{ task.status }}</span>{% endif %}
     {% if task.project and not project_filter and not nested %}{{ bits.project(task.project) }}{% endif %}
     {% if task.tags %}<span class="tk-tags">{{ bits.tags(task.tags) }}</span>{% endif %}

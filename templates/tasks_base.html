@@ -2,20 +2,33 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=6">
-<script src="{{ url_for('static', filename='tasks.js') }}?v=2" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=11">
+<script src="{{ url_for('static', filename='tasks.js') }}?v=7" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-view-{{ view }}{% endblock %}
 {% block content %}
 {% set closed_arg = None if show_closed else 0 %}
-{% set views = [('list', 'List', 'tasks_list', 'M3 4h10M3 8h10M3 12h10'), ('board', 'Board', 'tasks_board', 'M3 3h4v10H3zM9 3h4v6H9z'), ('calendar', 'Calendar', 'tasks_calendar', 'M2.500 4h11v9.500h-11zM2.500 7h11M5.500 2.500v3M10.500 2.500v3')] %}
+{% set views = [('list', 'List', 'tasks_list', 'M3 4h10M3 8h10M3 12h10'), ('board', 'Board', 'tasks_board', 'M3 3h4v10H3zM9 3h4v6H9z'), ('calendar', 'Calendar', 'tasks_calendar', 'M2.500 4h11v9.500h-11zM2.500 7h11M5.500 2.500v3M10.500 2.500v3'), ('gantt', 'Gantt', 'tasks_gantt', 'M2.500 4h6M5.500 8h8M3.500 12h5')] %}
 
 <div class="tk-header">
   <div>
     <h1 class="tk-heading">Tasks</h1>
     <p class="tk-lede">{% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} shown.{% endblock %}</p>
   </div>
-  <button type="button" class="btn btn-primary btn-sm" data-new-task>+ Add Task</button>
+  <div class="tk-header-side">
+    {% if running_timer %}
+    <form method="post" action="{{ url_for('task_timer_stop') }}" class="tk-running" aria-label="Running timer">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      <a class="tk-running-title" href="{{ url_for('task_detail', task_id=running_timer.task_id) }}" data-turbo-frame="task-panel" data-task-open>{{ running_timer.title }}</a>
+      <button type="submit" class="tk-timer-btn is-running" aria-label="Stop timer on {{ running_timer.title }}" title="Stop timer">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.500" fill="currentColor"/></svg>
+        <span data-timer-elapsed="{{ running_timer.elapsed }}">{{ running_timer.clock }}</span>
+      </button>
+    </form>
+    {% endif %}
+    <button type="button" class="btn btn-primary btn-sm" data-new-task>+ Add Task</button>
+  </div>
 </div>
 
 <nav class="tk-views" aria-label="Task views">

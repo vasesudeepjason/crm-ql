@@ -368,3 +368,13 @@ html:root .rc-photo:hover { border-color: var(--control-hover); }
   .rc-steps li { padding: 12px; gap: 10px; }
   .rc-clip { max-width: none; white-space: normal; }
 }
+
+/* A follow-up handed to a manager. */
+.rc-handoff { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; border-inline-start: 3px solid var(--accent); }
+.rc-handoff p { margin: 0; flex: 1 1 280px; min-width: 0; }
+.rc-handoff-note { color: var(--text-soft); overflow-wrap: anywhere; }
+.rc-handoff-form { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--rc-line); }
+.rc-handoff-form h3 { margin: 0; font: 500 14px/1.4 var(--font-display); color: var(--text); }
+.rc-handoff-form .rc-help { margin: 0; }
+.rc-handoff-form .btn { justify-self: start; }
+.rc-pill-mine { border-color: var(--accent-line, var(--accent)); }

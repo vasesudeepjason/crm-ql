@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ lead.name }} · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=6">
+<link rel="stylesheet" href="{{ url_for('static', filename='records.css') }}?v=7">
 <script src="{{ url_for('static', filename='records.js') }}?v=1" defer></script>
 {% endblock %}
 {% block main_class %}rc-page rc-detail{% endblock %}
@@ -53,6 +53,17 @@
   <div><dt>Budget</dt><dd>{{ lead.budget_range or '—' }}</dd></div>
   <div><dt>Owner</dt><dd>{{ 'You' if lead.owner_id == current_user.id else (lead.owner_name or 'Unassigned') }}</dd></div>
 </dl>
+
+{% if followup %}
+<div class="rc-banner rc-handoff" role="status">
+  <p><strong>{{ 'You' if followup.by_me else followup.requester }}</strong> asked <strong>{{ 'you' if followup.for_me else followup.manager }}</strong> to follow up on this lead{% if followup.date %} on {{ followup.date }}{% endif %}.{% if followup.note %} <span class="rc-handoff-note">“{{ followup.note }}”</span>{% endif %}</p>
+  {% if current_user.role == 'manager' or followup.by_me %}
+  <form method="post" action="{{ url_for('finish_lead_followup', lead_id=lead.id) }}">
+    <button type="submit" class="btn btn-outline btn-sm">{{ 'Mark as handled' if current_user.role == 'manager' else 'Withdraw request' }}</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="rc-quick">
   <a class="rc-quick-item" href="tel:{{ lead.phone }}">
@@ -246,6 +257,28 @@
           </li>
           {% endfor %}
         </ul>
+        {% endif %}
+
+        {% if followup_managers and current_user.role != 'manager' %}
+        <form method="post" action="{{ url_for('request_lead_followup', lead_id=lead.id) }}" class="rc-handoff-form">
+          <h3>Ask a manager to follow up</h3>
+          <p class="rc-help">Moves this lead to Follow Up and notifies the manager. You stay the owner.</p>
+          <label class="rc-field">
+            <span>Manager</span>
+            <select name="manager_id" required>
+              {% for m in followup_managers %}<option value="{{ m.id }}"{% if lead.followup_manager_id == m.id %} selected{% endif %}>{{ m.name }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="rc-field">
+            <span>Follow up on</span>
+            <input type="date" name="follow_up_date" value="{{ today }}" min="{{ today }}" required>
+          </label>
+          <label class="rc-field">
+            <span>Note for the manager (optional)</span>
+            <textarea name="note" rows="2" maxlength="500" placeholder="What happened on the call, and what is needed next"></textarea>
+          </label>
+          <button type="submit" class="btn btn-primary btn-sm">{{ 'Update request' if followup else 'Send to manager' }}</button>
+        </form>
         {% endif %}
 
         {% if is_owner and shareable_users %}

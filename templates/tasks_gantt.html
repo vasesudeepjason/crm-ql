@@ -1,0 +1,85 @@
+{% extends "tasks_base.html" %}
+{% import "_task_bits.html" as bits %}
+
+{% block tasks_lede %}{{ total }} task{{ '' if total == 1 else 's' }} on the timeline{% if unscheduled %}, {{ unscheduled }} without dates{% endif %}. Drag a bar to move it, drag an end to change its length, or click an empty row to schedule that task.{% endblock %}
+
+{% block tasks_toolbar %}
+{% set closed_q = None if show_closed else 0 %}
+<a class="tk-chip" href="#gantt-today" data-gantt-today>Today</a>
+{% for key, label in [('week', 'Week'), ('month', 'Month'), ('quarter', 'Quarter')] %}
+<a class="tk-chip{% if zoom == key %} is-on{% endif %}" aria-pressed="{{ 'true' if zoom == key else 'false' }}"
+   href="{{ url_for('tasks_gantt', zoom=key, assignee=assignee or None, closed=closed_q, project=project_filter) }}">{{ label }}</a>
+{% endfor %}
+{% endblock %}
+
+{% block tasks_body %}
+{% if not rows %}
+<p class="tk-nomatch tk-nomatch-floating">No tasks to show here yet.</p>
+{% else %}
+<div class="tk-gantt tk-zoom-{{ zoom }}" style="--tk-day: {{ day_width }}px; --tk-days: {{ days }};">
+  <div class="tk-gantt-scroll" data-gantt-scroll data-today="{{ today_offset }}" data-day="{{ day_width }}" data-days="{{ days }}" data-first="{{ first_day }}"
+       role="region" aria-label="Task timeline, {{ range_label }}" tabindex="0">
+    <div class="tk-gantt-head" aria-hidden="true">
+      <div class="tk-gantt-side"><span>Name</span><span class="tk-gantt-duecol">Due date</span></div>
+      <div class="tk-gantt-scale">
+        <div class="tk-gantt-months">
+          {% for month in months %}<span style="--n: {{ month.days }}">{% if month.label %}<b>{{ month.label }}</b>{% endif %}</span>{% endfor %}
+        </div>
+        <div class="tk-gantt-weeks">
+          {% for week in weeks %}<span{% if week.current %} class="is-now"{% endif %}>{{ week.label }}</span>{% endfor %}
+        </div>
+        {% if day_cells %}
+        <div class="tk-gantt-days">
+          {% for cell in day_cells %}<span{% if cell.today %} class="is-now"{% elif cell.off %} class="is-off"{% endif %}>{{ cell.label }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="tk-gantt-body">
+      <span class="tk-gantt-today" id="gantt-today" style="--t: {{ today_offset }}" aria-hidden="true"></span>
+      {% for row in rows %}
+      {% set task = row.task %}
+      <div class="tk-gantt-row tk-st-{{ task.status|slug }}{% if row.sub %} is-sub{% endif %}{% if task.status == 'Complete' %} is-done{% endif %}"
+           data-search-item data-search="{{ task.title|lower }} {{ task.tags|map(attribute='name')|join(' ') }} {{ task.assignees|map(attribute='name')|join(' ')|lower }}">
+        <div class="tk-gantt-side">
+          <span class="tk-gantt-name">
+            <span class="tk-gantt-icon" title="{{ task.status }}">{{ bits.status_icon(task.status) }}</span>
+            <a class="tk-title" href="{{ url_for('task_detail', task_id=task.id) }}" data-turbo-frame="task-panel" data-task-open>{{ task.title }}</a>
+          </span>
+          <span class="tk-gantt-duecol">
+            {% if row.bar %}<button type="button" class="tk-gantt-jump" data-gantt-jump title="Show on the timeline" aria-label="Show {{ task.title }} on the timeline">{{ bits.due(task.due) }}</button>
+            {% else %}{{ bits.due(task.due) }}{% endif %}
+          </span>
+        </div>
+        <div class="tk-gantt-track"{% if not row.dated %} data-schedule="{{ task.id }}" aria-label="Not scheduled"{% endif %}>
+          {% if row.bar %}
+          <a class="tk-gantt-bar" style="--s: {{ row.bar.start }}; --n: {{ row.bar.days }}" draggable="false"
+             data-task-id="{{ task.id }}" data-has="{{ row.bar.has }}"{% if row.bar.clipped %} data-clipped="1"{% endif %}
+             href="{{ url_for('task_detail', task_id=task.id) }}" data-turbo-frame="task-panel" data-task-open
+             aria-label="{{ task.title }}, {{ task.status }}, {{ row.bar.label }}" title="{{ task.title }} · {{ row.bar.label }}"></a>
+          <span class="tk-gantt-label" style="--s: {{ row.bar.start }}; --n: {{ row.bar.days }}" aria-hidden="true">
+            {% if task.assignees %}{{ bits.avatars(task.assignees, 2) }}{% endif %}<span>{{ task.title }}</span>
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      <div class="tk-gantt-row tk-gantt-addrow">
+        <div class="tk-gantt-side">
+          <form method="post" action="{{ url_for('task_create') }}" class="tk-add">
+            <input type="hidden" name="token" value="{{ token }}">
+            <input type="hidden" name="next" value="{{ here }}">
+            <input type="hidden" name="status" value="To Do">
+            {% if project_filter %}<input type="hidden" name="project_id" value="{{ project_filter }}">{% endif %}
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5.500v5M5.500 8h5"/></svg>
+            <input type="text" name="title" maxlength="200" placeholder="Add Task" aria-label="New task" autocomplete="off">
+            <button type="submit" class="btn btn-outline btn-sm">Save</button>
+          </form>
+        </div>
+        <div class="tk-gantt-track"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

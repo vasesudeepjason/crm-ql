@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ peer.name ~ ' · ' if peer else '' }}Chat · Lead Desk{% endblock %}
 {% block main_class %}chat-content{% endblock %}
-{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static',filename='chat.css') }}?v=4">{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ url_for('static',filename='chat.css') }}?v=5">{% endblock %}
 {% block content %}
 <header class="page-header"><h1 class="page-title">Chat</h1></header>
 <div class="chat-workspace{% if peer %} has-thread{% endif %}" data-updates="{{ url_for('chat_updates') }}"
@@ -34,7 +34,7 @@
     <form class="chat-composer" data-turbo="false" method="post" action="{{ url_for('send_chat_message',peer_id=peer.id) }}">
       <input type="hidden" name="token" value="{{ chat_token }}"><input type="hidden" name="client_id" value="{{ client_id }}">
       <label for="chat-body">Message {{ peer.name }}</label>
-      <textarea id="chat-body" name="body" rows="2" required maxlength="4000" placeholder="Write a message…"></textarea>
+      <textarea id="chat-body" name="body" rows="2" required maxlength="4000" placeholder="Write a message… Enter to send, Shift+Enter for a new line"></textarea>
       <div class="composer-actions"><span role="status" id="chat-status"></span><button type="submit" class="btn btn-primary btn-sm">Send</button></div>
     </form>
   </section>
@@ -51,5 +51,5 @@
   </section>
   {% endif %}
 </div>
-<script src="{{ url_for('static',filename='chat.js') }}?v=4" defer></script>
+<script src="{{ url_for('static',filename='chat.js') }}?v=5" defer></script>
 {% endblock %}

@@ -34,7 +34,13 @@ html:root .chat-content > .page-header { margin-bottom: 14px; padding-bottom: 8p
   display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px;
   border-radius: 50%; background: var(--bg); color: var(--text); font-size: 14px; font-weight: 500;
 }
-.chat-unread { background: var(--brand-blue); color: var(--action-ink); border-radius: 4px; font-size: 12px; padding: 1px 6px; }
+.chat-unread {
+  display: inline-grid; place-items: center; flex: none; min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 10px; background: var(--danger); color: #fff;
+  font: 700 11px/1 var(--font-body); font-variant-numeric: tabular-nums;
+}
+.chat-person:has(.chat-unread) .person-copy strong { font-weight: 700; }
+.chat-person:has(.chat-unread) .person-copy small { color: var(--text); }
 .chat-list-note { padding: 14px; }
 .chat-welcome { align-self: center; text-align: center; padding: 20px; color: var(--text-soft); }
 .chat-welcome h2 { color: var(--text); margin-block: 10px 4px; }
