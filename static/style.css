@@ -2331,6 +2331,17 @@ body {
 .project-empty { grid-column: 1 / -1; border: 1px dashed var(--border); border-radius: 14px; }
 .project-form { max-width: 960px; }
 .project-head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.project-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.project-filters select { flex: 0 1 220px; min-width: 0; max-width: 100%; }
+.project-billing dl { display: grid; gap: 10px; margin: 0; }
+.project-billing dt { color: var(--text-soft); font-size: 12px; }
+.project-billing dd { margin: 2px 0 0; color: var(--text); font-size: 14px; font-weight: 630; overflow-wrap: anywhere; }
+.project-billing dd.is-over { color: var(--danger); }
+.project-billing-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 12px 0 0; list-style: none; border-top: 1px solid var(--border); font-size: 13px; }
+.project-billing-list li { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.project-billing-list li > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.project-billing-list a { color: var(--accent); }
+.project-billing .page-sub { margin: 12px 0 0; font-size: 12px; }
 .form-section + .form-section { margin-top: 30px; padding-top: 23px; border-top: 1px solid var(--border); }
 .project-member-grid .check-line { display: flex; align-items: center; gap: 7px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.018); }
 .project-member-grid small { margin-left: auto; color: var(--text-faint); font-size: 11px; text-transform: capitalize; }

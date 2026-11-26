@@ -2,8 +2,8 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}{{ task.title }} · Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=16">
-<script src="{{ url_for('static', filename='tasks.js') }}?v=8" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=18">
+<script src="{{ url_for('static', filename='tasks.js') }}?v=10" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-page-detail{% endblock %}
 {% block content %}
@@ -14,6 +14,7 @@
       <a href="{{ url_for('tasks_list') }}" data-turbo-frame="_top">Tasks</a>
       {% if parent %}<span aria-hidden="true">/</span><a href="{{ url_for('task_detail', task_id=parent.id) }}">{{ parent.title }}</a>{% endif %}
       <span aria-hidden="true">/</span><span>{{ 'Subtask' if parent else 'Task' }}</span>
+      <span class="tk-save" data-save-status role="status"></span>
     </nav>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -51,21 +52,6 @@
           </details>
         </div>
 
-        <div class="tk-field">
-          <span class="tk-field-name">Dates</span>
-          <span class="tk-field-value tk-dates">
-            <span class="tk-dateset">
-              <input type="date" name="start_date" value="{{ task.start_date or '' }}" aria-label="Start date">
-              <input type="time" name="start_time" step="900" value="{{ task.start_time or '' }}" aria-label="Start time, optional">
-            </span>
-            <span aria-hidden="true">→</span>
-            <span class="tk-dateset">
-              <input type="date" name="due_date" value="{{ task.due_date or '' }}" aria-label="Due date">
-              <input type="time" name="due_time" step="900" value="{{ task.due_time or '' }}" aria-label="Due time, optional">
-            </span>
-          </span>
-        </div>
-
         <label class="tk-field">
           <span class="tk-field-name">Priority</span>
           <span class="tk-field-value tk-priority-select">
@@ -76,24 +62,6 @@
             </select>
           </span>
         </label>
-
-        <div class="tk-field">
-          <span class="tk-field-name">Track time</span>
-          <span class="tk-field-value tk-timer">
-            {% if time.running %}
-            <button type="submit" form="tk-timer-stop" class="tk-timer-btn is-running" aria-label="Stop timer" title="Stop timer">
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.500" fill="currentColor"/></svg>
-              <span data-timer-elapsed="{{ time.running.elapsed }}">{{ time.running.clock }}</span>
-            </button>
-            {% else %}
-            <button type="submit" form="tk-timer-start" class="tk-timer-btn"{% if time.elsewhere %} title="Starting here stops your timer on {{ time.elsewhere.title }}"{% endif %}>
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3.500v9l7.500-4.500Z" fill="currentColor"/></svg>
-              Start
-            </button>
-            {% endif %}
-            {% if time.total_label %}<span class="tk-muted">{{ time.total_label }} logged</span>{% endif %}
-          </span>
-        </div>
 
         {% if not parent %}
         <label class="tk-field">
@@ -112,6 +80,56 @@
         </div>
         {% endif %}
 
+        <div class="tk-field tk-field-wide tk-field-dates">
+          <span class="tk-field-name">Dates</span>
+          <span class="tk-field-value tk-dates">
+            <span class="tk-dateset">
+              <span class="tk-date-tag" aria-hidden="true">Start</span>
+              <input type="date" name="start_date" value="{{ task.start_date or '' }}" aria-label="Start date">
+              <input type="time" name="start_time" step="900" value="{{ task.start_time or '' }}" aria-label="Start time, optional">
+            </span>
+            <span class="tk-dateset">
+              <span class="tk-date-tag" aria-hidden="true">Due</span>
+              <input type="date" name="due_date" value="{{ task.due_date or '' }}" aria-label="Due date">
+              <input type="time" name="due_time" step="900" value="{{ task.due_time or '' }}" aria-label="Due time, optional">
+            </span>
+          </span>
+        </div>
+
+        <label class="tk-field">
+          <span class="tk-field-name">Repeats</span>
+          <span class="tk-field-value tk-project-select">
+            <select name="repeat" aria-label="Repeats">
+              {% for key, label in repeats %}<option value="{{ key }}"{% if key == (task.repeat or '') %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+          </span>
+        </label>
+
+        <label class="tk-field">
+          <span class="tk-field-name">Estimate</span>
+          <span class="tk-field-value">
+            <input type="text" class="tk-estimate" name="estimate" value="{{ task.estimate }}" placeholder="e.g. 2h 30m" aria-label="Time estimate, like 2h 30m" autocomplete="off">
+          </span>
+        </label>
+
+        <div class="tk-field tk-field-wide">
+          <span class="tk-field-name">Track time</span>
+          <span class="tk-field-value tk-timer">
+            {% if time.running %}
+            <button type="submit" form="tk-timer-stop" class="tk-timer-btn is-running" aria-label="Stop timer" title="Stop timer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.500" fill="currentColor"/></svg>
+              <span data-timer-elapsed="{{ time.running.elapsed }}">{{ time.running.clock }}</span>
+            </button>
+            {% else %}
+            <button type="submit" form="tk-timer-start" class="tk-timer-btn"{% if time.elsewhere %} title="Starting here stops your timer on {{ time.elsewhere.title }}"{% endif %}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3.500v9l7.500-4.500Z" fill="currentColor"/></svg>
+              Start
+            </button>
+            {% endif %}
+            {% if time.total_label %}<span class="tk-muted">{{ time.total_label }} logged{% if task.estimate %} of {{ task.estimate }}{% endif %}</span>{% endif %}
+          </span>
+        </div>
+
         <label class="tk-field tk-field-wide">
           <span class="tk-field-name">Tags</span>
           <span class="tk-field-value tk-tags-edit">
@@ -122,7 +140,7 @@
       </div>
 
       <label class="tk-description">
-        <span class="tk-field-name">Description</span>
+        <span class="tk-section-title">Description</span>
         <textarea name="description" rows="5" placeholder="Add a description. Drop or paste images and files to attach them.">{{ task.description or '' }}</textarea>
       </label>
       <noscript><button type="submit" class="btn btn-primary btn-sm">Save changes</button></noscript>
@@ -131,14 +149,8 @@
     <form id="tk-timer-start" method="post" action="{{ url_for('task_timer_start', task_id=task.id) }}" hidden><input type="hidden" name="token" value="{{ token }}"></form>
     <form id="tk-timer-stop" method="post" action="{{ url_for('task_timer_stop') }}" hidden><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ url_for('task_detail', task_id=task.id) }}"></form>
 
-    <form method="post" action="{{ url_for('task_link_add', task_id=task.id) }}" class="tk-link-form">
-      <input type="hidden" name="token" value="{{ token }}">
-      <label class="tk-field-name" for="tk-link-input">Links</label>
-      <div class="tk-link-row">
-        <input type="text" id="tk-link-input" name="url" inputmode="url" maxlength="2000" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste a link and press Enter">
-        <button type="submit" class="btn btn-outline btn-sm">Add link</button>
-      </div>
-    </form>
+    <section class="tk-linksec" aria-labelledby="tk-links-title">
+    <h2 id="tk-links-title" class="tk-section-title">Links <span class="tk-group-count">{{ links|length }}</span></h2>
     {% if links %}
     <ul class="tk-links" aria-label="Links">
       {% for link in links %}
@@ -152,6 +164,14 @@
       {% endfor %}
     </ul>
     {% endif %}
+    <form method="post" action="{{ url_for('task_link_add', task_id=task.id) }}" class="tk-link-form">
+      <input type="hidden" name="token" value="{{ token }}">
+      <div class="tk-link-row">
+        <input type="text" id="tk-link-input" name="url" inputmode="url" maxlength="2000" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste a link and press Enter" aria-label="Add a link">
+        <button type="submit" class="btn btn-outline btn-sm">Add link</button>
+      </div>
+    </form>
+    </section>
 
     <section class="tk-attachments" aria-labelledby="tk-files-title" data-task-files>
       <div class="tk-attach-head">
@@ -166,7 +186,15 @@
           <noscript><button type="submit" class="btn btn-primary btn-sm">Upload</button></noscript>
         </form>
       </div>
+      {% if not files %}
+      <div class="tk-dropzone">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.500V5M8 8.500 12 4.500l4 4M5 14.500v3A1.500 1.500 0 0 0 6.500 19h11a1.500 1.500 0 0 0 1.500-1.500v-3"/></svg>
+        <p class="tk-dropzone-lead">Drop files here, or paste an image into the description</p>
+        <p class="tk-muted tk-attach-hint" data-upload-status role="status">Images, PDF, Excel, PowerPoint, Word and text files, up to {{ file_max_mb }} MB each.</p>
+      </div>
+      {% else %}
       <p class="tk-muted tk-attach-hint" data-upload-status role="status">Images, PDF, Excel, PowerPoint, Word and text files, up to {{ file_max_mb }} MB each.</p>
+      {% endif %}
       {% if files %}
       <ul class="tk-files">
         {% for file in files %}
@@ -192,9 +220,14 @@
       {% endif %}
     </section>
 
-    {% if time.entries %}
     <section class="tk-subsection" aria-labelledby="tk-time-title">
-      <h2 id="tk-time-title">Time tracked <span class="tk-group-count">{{ time.total_label or 'Timer running' }}</span></h2>
+      <h2 id="tk-time-title">Time tracked <span class="tk-group-count">{{ time.total_label or ('Timer running' if time.entries else 'None yet') }}</span></h2>
+      <form method="post" action="{{ url_for('task_time_add', task_id=task.id) }}" class="tk-time-add">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="text" name="duration" required autocomplete="off" placeholder="Add time by hand, e.g. 1h 30m" aria-label="Time worked, like 1h 30m">
+        <input type="date" name="day" value="{{ today }}" max="{{ today }}" aria-label="Day worked">
+        <button type="submit" class="btn btn-outline btn-sm">Add time</button>
+      </form>
       {% for entry in time.entries %}
       <div class="tk-subrow tk-timerow">
         <span class="tk-avatar tk-tone-{{ entry.tone }}" aria-hidden="true">{{ entry.initials }}</span>
@@ -211,11 +244,11 @@
       </div>
       {% endfor %}
     </section>
-    {% endif %}
 
     {% if not parent %}
     <section class="tk-subsection" aria-labelledby="tk-subtasks-title">
-      <h2 id="tk-subtasks-title">Subtasks <span class="tk-group-count">{{ task.subtasks|length }}</span></h2>
+      {% set subs_done = task.subtasks|selectattr('status', 'equalto', 'Complete')|list|length %}
+      <h2 id="tk-subtasks-title">Subtasks <span class="tk-group-count">{% if task.subtasks %}{{ subs_done }} of {{ task.subtasks|length }} done{% else %}0{% endif %}</span></h2>
       {% for sub in task.subtasks %}
       <div class="tk-subrow{% if sub.status == 'Complete' %} is-done{% endif %}">
         <form method="post" action="{{ url_for('task_set_status', task_id=sub.id) }}" class="tk-check-form">

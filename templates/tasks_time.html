@@ -1,0 +1,71 @@
+{% extends "tasks_base.html" %}
+{% import "_task_bits.html" as bits %}
+
+{% block tasks_lede %}{{ total_label }} tracked, {{ range_label }}.{% if own_only %} This is your own time.{% endif %}{% endblock %}
+
+{% block tasks_toolbar %}
+{% for key, label in periods %}
+<a class="tk-chip{% if period == key %} is-on{% endif %}" aria-pressed="{{ 'true' if period == key else 'false' }}"
+   href="{{ url_for('tasks_time', period=key, assignee=assignee or None, project=project_filter) }}">{{ label }}</a>
+{% endfor %}
+{% endblock %}
+
+{% macro ranking(title, rows, heading_id) %}
+<section class="tk-time-card" aria-labelledby="{{ heading_id }}">
+  <h2 id="{{ heading_id }}">{{ title }}</h2>
+  {% if rows %}
+  <ul>
+    {% for row in rows %}
+    <li>
+      <span class="tk-time-name">{{ row.name }}</span><span class="tk-time-amount">{{ row.label }}</span>
+      <span class="tk-time-bar" aria-hidden="true"><span style="width: {{ row.share }}%"></span></span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="tk-muted">Nothing tracked in this period.</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% block tasks_body %}
+<div class="tk-time-grid">
+  {{ ranking('By person', people, 'tk-time-people') }}
+  {{ ranking('By project', by_project, 'tk-time-projects') }}
+  {{ ranking('By client', by_client, 'tk-time-clients') }}
+</div>
+
+{% if task_rows %}
+<section class="tk-time-card tk-time-wide" aria-labelledby="tk-time-tasks">
+  <h2 id="tk-time-tasks">By task</h2>
+  <div class="tk-time-table" role="table" aria-label="Time by task">
+    <div class="tk-time-row is-head" role="row"><span role="columnheader">Task</span><span role="columnheader">This period</span><span role="columnheader">All time</span><span role="columnheader">Estimate</span></div>
+    {% for row in task_rows %}
+    <div class="tk-time-row" role="row" data-search-item data-search="{{ row.task.title|lower }}">
+      <span role="cell" class="tk-time-task">
+        <a class="tk-title" href="{{ url_for('task_detail', task_id=row.task.id) }}" data-turbo-frame="task-panel" data-task-open>{{ row.task.title }}</a>
+        {% if row.task.project %}{{ bits.project(row.task.project) }}{% endif %}
+      </span>
+      <span role="cell">{{ row.label }}</span>
+      <span role="cell"{% if row.over %} class="is-over" title="More time tracked than estimated"{% endif %}>{{ row.ever }}</span>
+      <span role="cell" class="tk-muted">{{ row.estimate or '—' }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% for day in days %}
+<section class="tk-time-card tk-time-wide" aria-label="{{ day.label }}">
+  <h2>{{ day.label }} <span class="tk-group-count">{{ day.total }}</span></h2>
+  {% for entry in day.entries %}
+  <div class="tk-subrow tk-timerow" data-search-item data-search="{{ entry.task.title|lower }} {{ entry.who|lower }}">
+    <span class="tk-avatar tk-tone-{{ entry.tone }}" aria-hidden="true">{{ entry.initials }}</span>
+    <span class="tk-timerow-name">
+      <a class="tk-title" href="{{ url_for('task_detail', task_id=entry.task.id) }}" data-turbo-frame="task-panel" data-task-open>{{ entry.task.title }}</a>
+      <small class="tk-muted">{{ entry.who }} · {{ entry.project }}</small>
+    </span>
+    <span class="tk-due-label">{{ entry.label }}</span>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
+{% endblock %}

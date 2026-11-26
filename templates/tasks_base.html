@@ -2,13 +2,13 @@
 {% import "_task_bits.html" as bits %}
 {% block title %}Tasks · Lead Desk{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=16">
-<script src="{{ url_for('static', filename='tasks.js') }}?v=8" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=18">
+<script src="{{ url_for('static', filename='tasks.js') }}?v=10" defer></script>
 {% endblock %}
 {% block main_class %}tk-page tk-view-{{ view }}{% endblock %}
 {% block content %}
 {% set closed_arg = None if show_closed else 0 %}
-{% set views = [('list', 'List', 'tasks_list', 'M3 4h10M3 8h10M3 12h10'), ('board', 'Board', 'tasks_board', 'M3 3h4v10H3zM9 3h4v6H9z'), ('calendar', 'Calendar', 'tasks_calendar', 'M2.500 4h11v9.500h-11zM2.500 7h11M5.500 2.500v3M10.500 2.500v3'), ('gantt', 'Gantt', 'tasks_gantt', 'M2.500 4h6M5.500 8h8M3.500 12h5')] %}
+{% set views = [('list', 'List', 'tasks_list', 'M3 4h10M3 8h10M3 12h10'), ('board', 'Board', 'tasks_board', 'M3 3h4v10H3zM9 3h4v6H9z'), ('calendar', 'Calendar', 'tasks_calendar', 'M2.500 4h11v9.500h-11zM2.500 7h11M5.500 2.500v3M10.500 2.500v3'), ('gantt', 'Gantt', 'tasks_gantt', 'M2.500 4h6M5.500 8h8M3.500 12h5'), ('time', 'Time', 'tasks_time', 'M8 4.500V8l2.500 1.500M2 8a6 6 0 1 0 12 0A6 6 0 0 0 2 8')] %}
 
 <div class="tk-header">
   <div>

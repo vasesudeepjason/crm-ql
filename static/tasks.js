@@ -265,6 +265,8 @@
   // ---- Gantt: open on today, and come back to where you were after a reload ----
   var ganttLeft = {}, ganttPlaced = new WeakSet();
   function ganttToday(scroller, smooth) {
+    // A paged day scale may not include today: open it at its first day instead.
+    if (scroller.dataset.today === '') { scroller.scrollLeft = 0; return; }
     var side = scroller.querySelector('.tk-gantt-side');
     var sideWidth = side ? side.offsetWidth : 0;
     var left = Number(scroller.dataset.today) * Number(scroller.dataset.day) - (scroller.clientWidth - sideWidth) / 3;
@@ -404,7 +406,8 @@
       .then(refreshList);
   }
   document.addEventListener('pointerdown', function (event) {
-    if (event.button !== 0 || event.pointerType === 'touch' || !event.target.closest) return;
+    if (event.button !== 0 || !event.target.closest) return;
+    var touch = event.pointerType === 'touch';   // fingers can drag bars, but not schedule empty rows
     var track = event.target.closest('.tk-gantt-track');
     var scroller = track && track.closest('[data-gantt-scroll]');
     if (!scroller) return;
@@ -416,7 +419,7 @@
         bar: bar, label: bar.nextElementSibling, id: bar.dataset.taskId, has: bar.dataset.has,
         s: Number(bar.style.getPropertyValue('--s')), n: Number(bar.style.getPropertyValue('--n'))
       };
-    } else if (!bar && track.dataset.schedule && event.target === track) {
+    } else if (!touch && !bar && track.dataset.schedule && event.target === track) {
       drag = { mode: 'new', id: track.dataset.schedule, has: 'both', s: dayAt(track, event.clientX), n: 1 };
     } else {
       return;
@@ -503,8 +506,34 @@
     scroller.scrollBy({ left: (bar.getBoundingClientRect().left - (box.left + side + 48)) / scale, behavior: calm ? 'auto' : 'smooth' });
   }, true);
 
+  // ---- "Saving…" then "Saved" beside the breadcrumb while the task saves itself ----
+  var savedAt = 0;
+  var saveTimer = null;
+  function saveStatus(text, state) {
+    document.querySelectorAll('[data-save-status]').forEach(function (label) {
+      label.textContent = text;
+      label.dataset.state = state;
+    });
+  }
+  function showSaved() {
+    if (Date.now() - savedAt > 4000) return;
+    saveStatus('Saved', 'done');
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { saveStatus('', ''); }, 2500);
+  }
+  function isAutosave(event) { return event.target.matches && event.target.matches('form[data-autosave]'); }
+  document.addEventListener('turbo:submit-start', function (event) {
+    if (isAutosave(event)) saveStatus('Saving…', 'busy');
+  });
+  document.addEventListener('turbo:submit-end', function (event) {
+    if (!isAutosave(event)) return;
+    if (event.detail.success) { savedAt = Date.now(); showSaved(); }
+    else saveStatus('Not saved. Check your connection and change it again.', 'error');
+  });
+
   document.addEventListener('turbo:frame-load', function (event) {
-    if (event.target.id === FRAME_ID) scrollFeed();
+    // Saving redraws the panel, so the label is put back on the new copy.
+    if (event.target.id === FRAME_ID) { scrollFeed(); showSaved(); }
   });
   document.addEventListener('turbo:load', scrollFeed);
   scrollFeed();

@@ -2300,6 +2300,20 @@ def projects_list():
     db = get_db()
     user = current_user()
     clause, params = visible_projects_clause(user, "p")
+    clients = db.execute(
+        f"""SELECT DISTINCT c.id, c.name FROM projects p JOIN companies c ON c.id=p.company_id
+            WHERE {clause} ORDER BY c.name COLLATE NOCASE""", params).fetchall()
+    type_filter, client_filter = request.args.get("type", ""), request.args.get("client", "")
+    if type_filter in PROJECT_TYPES:
+        clause, params = clause + " AND p.project_type=?", [*params, type_filter]
+    else:
+        type_filter = ""
+    if client_filter == "internal":
+        clause += " AND p.company_id IS NULL"
+    elif client_filter.isdigit():
+        clause, params = clause + " AND p.company_id=?", [*params, int(client_filter)]
+    else:
+        client_filter = ""
     projects = db.execute(
         f"""SELECT p.*, pm.name AS project_manager_name, l.name AS lead_name, c.name AS company_name,
                    COUNT(t.id) AS task_count, SUM(CASE WHEN t.status='Complete' THEN 1 ELSE 0 END) AS completed_task_count
@@ -2320,7 +2334,8 @@ def projects_list():
     requested_view = request.args.get("view")
     if requested_view in ("cards", "details") and requested_view != view:
         view = session["projects_view"] = requested_view
-    return render_template("projects.html", projects=projects, summary=summary, view=view)
+    return render_template("projects.html", projects=projects, summary=summary, view=view, clients=clients,
+                           project_types=PROJECT_TYPES, type_filter=type_filter, client_filter=client_filter)
 
 
 @app.route("/projects/new", methods=["GET", "POST"])
@@ -2456,7 +2471,25 @@ def project_detail(project_id):
     activities = db.execute("""SELECT a.*,u.name AS user_name FROM project_activities a LEFT JOIN users u ON u.id=a.user_id
         WHERE a.project_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 30""", (project_id,)).fetchall()
     all_users = db.execute("SELECT id,name,role FROM users ORDER BY name").fetchall()
+    spent = db.execute(
+        """SELECT u.name, SUM(t.seconds) AS seconds FROM work_task_time t JOIN work_tasks w ON w.id = t.task_id
+           LEFT JOIN users u ON u.id = t.user_id WHERE w.project_id=? AND t.ended_at IS NOT NULL
+           GROUP BY t.user_id ORDER BY seconds DESC""", (project_id,)).fetchall()
+    tracked = sum(row["seconds"] for row in spent)
+    estimated = sum((task["estimate_minutes"] or 0) for task in every_task) * 60
+    invoices = []
+    if user["role"] == "manager" and project["company_id"]:
+        invoices = db.execute("""SELECT id, invoice_no, invoice_date, total_amount, received_amount FROM invoices
+                                 WHERE company_id=? ORDER BY id DESC LIMIT 20""", (project["company_id"],)).fetchall()
+    billing = {
+        "tracked": _duration_label(tracked) if tracked else "", "estimated": _duration_label(estimated) if estimated else "",
+        "over": bool(estimated) and tracked > estimated,
+        "people": [{"name": row["name"] or "Former user", "label": _duration_label(row["seconds"])} for row in spent],
+        "invoices": invoices, "invoiced": sum(row["total_amount"] or 0 for row in invoices),
+        "received": sum(row["received_amount"] or 0 for row in invoices),
+    }
     response = app.make_response(render_template("project_detail.html", project=project, members=members, tasks=tasks, activities=activities,
+        billing=billing,
         assigned=assigned, note=note, note_draft=draft, note_conflict=conflict,
         users=all_users, can_manage=can_manage_project(user, project),
         companies=_project_client_options(db) if can_manage_project(user, project) else [], project_types=PROJECT_TYPES,
@@ -3094,9 +3127,13 @@ def company_detail(company_id):
         "SELECT * FROM activity_logs WHERE entity_type = 'company' AND entity_id = ? ORDER BY created_at DESC LIMIT 50",
         (company_id,),
     ).fetchall()
+    clause, params = visible_projects_clause(current_user(), "p")
+    projects = db.execute(
+        f"""SELECT p.id, p.name, p.project_type, p.status, p.target_date FROM projects p
+            WHERE p.company_id=? AND {clause} ORDER BY p.id DESC""", [company_id, *params]).fetchall()
     return render_template(
         "company_detail.html", company=company, contacts=contacts, leads=leads, invoices=invoices,
-        activity=activity, statuses=COMPANY_STATUSES,
+        activity=activity, statuses=COMPANY_STATUSES, projects=projects,
     )
 
 
@@ -4051,6 +4088,9 @@ def _init_work_tasks(db):
         # Optional times of day (HH:MM) that go with start_date and due_date.
         ("start_time", "TEXT"),
         ("due_time", "TEXT"),
+        ("estimate_minutes", "INTEGER"),   # how long the task is expected to take
+        ("repeat", "TEXT"),                # daily, weekly or monthly: completing it opens the next one
+        ("next_task_id", "INTEGER"),       # the occurrence that completing this task opened
     ])
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_tasks_project ON work_tasks(project_id)")
     db.execute("""
@@ -4135,6 +4175,25 @@ def _init_task_time(db):
     db.execute("CREATE INDEX IF NOT EXISTS idx_work_task_time_task ON work_task_time(task_id, id)")
     db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_work_task_time_running
                   ON work_task_time(user_id) WHERE ended_at IS NULL""")
+
+
+def _parse_duration(text):
+    """Minutes from what a person types: 2h, 90m, 1.5h, 2h 30m, or a bare number of hours.
+
+    Returns None for an empty box and raises ValueError for anything it cannot read.
+    """
+    text = (text or "").strip().lower()
+    if not text:
+        return None
+    match = re.fullmatch(r"(?:(\d+(?:\.\d+)?)\s*h(?:ours?|rs?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?", text)
+    if match and (match.group(1) or match.group(2)):
+        minutes = float(match.group(1) or 0) * 60 + int(match.group(2) or 0)
+    else:
+        minutes = float(text) * 60
+    minutes = round(minutes)
+    if not 0 < minutes <= 60 * 1000:
+        raise ValueError("out of range")
+    return minutes
 
 
 def _seconds_since(stamp):
@@ -4375,6 +4434,7 @@ def _task_views(db, rows):
         item["due"] = _due_view(row["due_date"], row["status"] == "Complete")
         seconds, item["timer_running"] = tracked.get(row["id"], (0, False))
         item["tracked"] = _duration_label(seconds) if seconds else ""
+        item["estimate"] = _duration_label(row["estimate_minutes"] * 60) if row["estimate_minutes"] else ""
         item["subtasks"] = []
         views.append(item)
     return views
@@ -4405,6 +4465,58 @@ def _get_work_task(db, task_id):
     return row
 
 
+TASK_REPEATS = [("", "Does not repeat"), ("daily", "Every day"), ("weekly", "Every week"), ("monthly", "Every month")]
+
+
+def _next_repeat_date(day, repeat):
+    if repeat == "daily":
+        return day + timedelta(days=1)
+    if repeat == "weekly":
+        return day + timedelta(days=7)
+    year, month = day.year + (day.month == 12), day.month % 12 + 1
+    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def _spawn_next_task(db, task):
+    """When a repeating task is completed, open its next occurrence with the dates moved on.
+
+    It happens once per task: reopening and completing it again does not make another copy.
+    """
+    if not task["repeat"] or task["next_task_id"]:
+        return
+    today = datetime.now(APP_TIMEZONE).date()
+
+    def parse(value):
+        try:
+            return date.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+    start, due = parse(task["start_date"]), parse(task["due_date"])
+    anchor = due or start or today
+    following = _next_repeat_date(anchor, task["repeat"])
+    while following <= today:
+        following = _next_repeat_date(following, task["repeat"])
+    shift = following - anchor
+    new_start = (start + shift).isoformat() if start else None
+    new_due = (due + shift).isoformat() if due else None if start else following.isoformat()
+    now = now_str()
+    new_id = db.execute(
+        """INSERT INTO work_tasks (parent_id, project_id, title, description, status, priority, start_date, start_time,
+                                   due_date, due_time, estimate_minutes, repeat, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (task["parent_id"], task["project_id"], task["title"], task["description"], "To Do", task["priority"], new_start,
+         task["start_time"], new_due, task["due_time"], task["estimate_minutes"], task["repeat"], task["created_by"], now, now)).lastrowid
+    db.execute("INSERT INTO work_task_tags (task_id, tag) SELECT ?, tag FROM work_task_tags WHERE task_id=?", (new_id, task["id"]))
+    for row in db.execute("SELECT user_id FROM work_task_assignees WHERE task_id=?", (task["id"],)).fetchall():
+        db.execute("INSERT INTO work_task_assignees (task_id, user_id) VALUES (?,?)", (new_id, row["user_id"]))
+        _notify_task_assigned(db, row["user_id"], new_id, task["title"])
+    db.execute("UPDATE work_tasks SET next_task_id=? WHERE id=?", (new_id, task["id"]))
+    label = dict(TASK_REPEATS)[task["repeat"]].lower()
+    _log_task_event(db, new_id, f"created this task, which repeats {label}")
+    _log_task_event(db, task["id"], f"opened the next one for {_moment_label(new_due or new_start)}")
+
+
 def _set_task_status(db, task, status):
     if status == task["status"]:
         return
@@ -4413,6 +4525,8 @@ def _set_task_status(db, task, status):
                (status, now, now if status == "Complete" else None, task["id"]))
     _log_task_event(db, task["id"], f"changed status from {task['status']} to {status}")
     _note_on_project(db, task["project_id"], "Task status updated", f"{task['title']}: {task['status']} → {status}")
+    if status == "Complete":
+        _spawn_next_task(db, task)
 
 
 def _note_on_project(db, project_id, event, detail):
@@ -4475,6 +4589,7 @@ def _task_scope(db, user):
         "projects": _visible_project_options(db, user),
         "show_closed": show_closed,
         "users": db.execute("SELECT id, name FROM users ORDER BY name").fetchall(),
+        "visible": views,
     }
 
 
@@ -4604,11 +4719,42 @@ def _task_moments(item):
     return start, max(end, start + timedelta(minutes=15))
 
 
-def _tasks_gantt_day(scope, today):
+def _gantt_grouped(rows):
+    """Put Gantt rows under a heading per project, each with a bar spanning its tasks."""
+    blocks = []
+    for row in rows:
+        if row["sub"] and blocks:
+            blocks[-1].append(row)
+        else:
+            blocks.append([row])
+    groups = {}
+    for block in blocks:
+        project = block[0]["task"]["project"]
+        groups.setdefault(project["name"] if project else None, []).extend(block)
+    out = []
+    for name in sorted(groups, key=lambda value: (value is None, (value or "").lower())):
+        members = groups[name]
+        bars = [row["bar"] for row in members if row["bar"]]
+        summary = None
+        if bars:
+            start = min(bar["start"] for bar in bars)
+            summary = {"start": start, "days": max(bar["start"] + bar["days"] for bar in bars) - start}
+        out.append({"group": name or "No project", "count": len(members), "summary": summary,
+                    "task": None, "bar": None, "sub": False, "dated": True})
+        out.extend(members)
+    return out
+
+
+def _tasks_gantt_day(scope, today, group):
     """The Gantt at its closest scale: two weeks around today, in 15-minute steps."""
     step, width, day_count = timedelta(minutes=15), GANTT_DAY_WIDTHS["day"], 14
     now = datetime.now(APP_TIMEZONE).replace(tzinfo=None)
-    first = datetime.combine(today - timedelta(days=3), datetime.min.time())
+    # ?start= pages the two-week window; without it the window sits around today.
+    try:
+        opening, paged = date.fromisoformat(request.args.get("start", "")), True
+    except ValueError:
+        opening, paged = today - timedelta(days=3), False
+    first = datetime.combine(opening, datetime.min.time())
     last = first + timedelta(days=day_count)
 
     def shown(item):
@@ -4632,16 +4778,20 @@ def _tasks_gantt_day(scope, today):
                        "label": f"{stamp(when[0])} to {stamp(when[1])}", "has": "both", "clipped": (start, end) != when}
             rows.append({"task": task, "sub": is_sub, "bar": bar, "dated": bool(when)})
 
+    if group:
+        rows = _gantt_grouped(rows)
     days = [first.date() + timedelta(days=offset) for offset in range(day_count)]
     return _tasks_page(
         "tasks_gantt.html", scope, view="gantt", month=None, rows=rows, zoom="day", day_width=width, day_cells=[],
         days=day_count * 96, unit_minutes=15, first_day=first.strftime("%Y-%m-%dT%H:%M"),
+        grouped=group, day_paged=paged, prev_start=(opening - timedelta(days=7)).isoformat(),
+        next_start=(opening + timedelta(days=7)).isoformat(),
         months=[{"days": 96, "label": f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"} for day in days],
         weeks=[{"label": f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}", "current": day == today and hour == now.hour}
                for day in days for hour in range(24)],
-        today_offset=round((now - first) / step - 0.5, 2),
+        today_offset=round((now - first) / step - 0.5, 2) if first <= now < last else "",
         range_label=f"{days[0].day} {days[0].strftime('%B')} to {days[-1].day} {days[-1].strftime('%B %Y')}",
-        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if not row["bar"]),
+        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if row["task"] and not row["bar"]),
     )
 
 
@@ -4656,8 +4806,12 @@ def tasks_gantt():
     else:
         zoom = session.get("tasks_gantt_zoom", "month")
         zoom = zoom if zoom in GANTT_DAY_WIDTHS else "month"
+    group = request.args.get("group")
+    if group in ("project", "none"):
+        session["tasks_gantt_group"] = group
+    group = session.get("tasks_gantt_group") == "project"
     if zoom == "day":
-        return _tasks_gantt_day(scope, today)
+        return _tasks_gantt_day(scope, today, group)
     day_width = GANTT_DAY_WIDTHS[zoom]
 
     def span(item):
@@ -4708,6 +4862,8 @@ def tasks_gantt():
                    "clipped": (start, end) != when}
         rows.append({"task": item, "sub": is_sub, "bar": bar, "dated": bool(when)})
 
+    if group:
+        rows = _gantt_grouped(rows)
     months, cursor = [], first
     while cursor <= last:
         following = (cursor.replace(day=1) + timedelta(days=32)).replace(day=1)
@@ -4727,9 +4883,10 @@ def tasks_gantt():
             day_cells.append({"label": f"{day.strftime('%a')[0]} {day.day}", "off": day.weekday() >= 5, "today": day == today})
     return _tasks_page(
         "tasks_gantt.html", scope, view="gantt", month=None, rows=rows, zoom=zoom, day_width=day_width, day_cells=day_cells,
+        grouped=group,
         days=days, months=months, weeks=weeks, today_offset=(today - first).days, first_day=first.isoformat(), unit_minutes=1440,
         range_label=f"{first.day} {first.strftime('%B %Y')} to {last.day} {last.strftime('%B %Y')}",
-        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if not row["bar"]),
+        total=sum(1 for row in rows if row["bar"]), unscheduled=sum(1 for row in rows if row["task"] and not row["bar"]),
     )
 
 
@@ -4773,6 +4930,19 @@ def task_create():
     return redirect(_tasks_back(default))
 
 
+_ISO_DAY = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_TASK_DATE_EVENTS = ("scheduled this task for ", "set start date to ", "set due date to ")
+
+
+def _plain_day(match):
+    """2026-11-26 inside an activity line reads as 26 Nov 2026."""
+    try:
+        day = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return match.group(0)
+    return f"{day.day} {day.strftime('%b %Y')}"
+
+
 @app.get("/tasks/<int:task_id>")
 @login_required
 def task_detail(task_id):
@@ -4793,8 +4963,18 @@ def task_detail(task_id):
         label = f"{stamp.strftime('%A')}, {stamp.day} {stamp.strftime('%B')}"
         if not days or days[-1]["label"] != label:
             days.append({"label": label, "events": []})
+        body, topic = row["body"], None
+        if row["kind"] != "comment":
+            body = _ISO_DAY.sub(_plain_day, body)
+            topic = next((p for p in _TASK_DATE_EVENTS if body.startswith(p)), None)
+            # Several date changes in a row by one person read as a single line: keep the latest.
+            last = days[-1]["events"][-1] if days[-1]["events"] else None
+            if topic and last and last["topic"] == topic and last["user_id"] == row["user_id"] \
+                    and (stamp - last["stamp"]).total_seconds() <= 600:
+                days[-1]["events"].pop()
         days[-1]["events"].append({
-            "kind": row["kind"], "body": row["body"], "user": row["user_name"] or "Former user",
+            "topic": topic, "user_id": row["user_id"], "stamp": stamp,
+            "kind": row["kind"], "body": body, "user": row["user_name"] or "Former user",
             "initials": _initials(row["user_name"]), "tone": (row["user_id"] or 0) % 5,
             "time": stamp.strftime("%I:%M %p").lstrip("0"),
         })
@@ -4806,7 +4986,8 @@ def task_detail(task_id):
         statuses=WORK_STATUSES, priorities=WORK_PRIORITIES, token=_task_token(),
         task_projects=_visible_project_options(db, user, task["project"]),
         can_delete=user["role"] == "manager" or task["created_by"] == user["id"],
-        files=_task_file_views(db, task, user), time=_task_time_view(db, task_id, user),
+        files=_task_file_views(db, task, user), time=_task_time_view(db, task_id, user), today=today_str(),
+        repeats=TASK_REPEATS,
         links=db.execute("SELECT id, url, label FROM work_task_links WHERE task_id=? AND removed_at IS NULL ORDER BY id",
                          (task_id,)).fetchall(),
         file_accept=",".join(sorted(TASK_FILE_TYPES)), file_max_mb=TASK_FILE_MAX_BYTES // (1024 * 1024),
@@ -4977,6 +5158,13 @@ def task_update(task_id):
         start_time, due_time = start_time if start else None, due_time if due else None
         if start and start == due and start_time and due_time and due_time <= start_time:
             raise ValueError("Choose a due time after the start time.")
+        try:
+            estimate = _parse_duration(form["estimate"]) if "estimate" in form else task["estimate_minutes"]
+        except ValueError:
+            raise ValueError("Enter the estimate as hours and minutes, like 2h 30m.")
+        repeat = form.get("repeat", task["repeat"] or "")
+        if repeat not in dict(TASK_REPEATS):
+            raise ValueError("Choose how often the task repeats.")
     except ValueError as error:
         flash(str(error), "error")
         return here
@@ -5003,6 +5191,10 @@ def task_update(task_id):
         _log_task_event(db, task_id, f"set start date to {start}" if start else "cleared the start date")
     if due != task["due_date"]:
         _log_task_event(db, task_id, f"set due date to {due}" if due else "cleared the due date")
+    if repeat != (task["repeat"] or ""):
+        _log_task_event(db, task_id, f"set this task to repeat {dict(TASK_REPEATS)[repeat].lower()}" if repeat else "stopped this task repeating")
+    if estimate != task["estimate_minutes"]:
+        _log_task_event(db, task_id, f"set the estimate to {_duration_label(estimate * 60)}" if estimate else "cleared the estimate")
     if (start_time, due_time) != (task["start_time"], task["due_time"]) and (start, due) == (task["start_date"], task["due_date"]):
         _log_task_event(db, task_id, "set the time to " + _schedule_label(start, start_time, due, due_time))
     for uid in sorted(wanted - current):
@@ -5034,8 +5226,8 @@ def task_update(task_id):
             _note_on_project(db, new_project, "Task added", title)
     db.execute(
         """UPDATE work_tasks SET title=?, description=?, priority=?, start_date=?, start_time=?, due_date=?, due_time=?,
-                  updated_at=? WHERE id=?""",
-        (title, description, priority, start, start_time, due, due_time, now_str(), task_id),
+                  estimate_minutes=?, repeat=?, updated_at=? WHERE id=?""",
+        (title, description, priority, start, start_time, due, due_time, estimate, repeat or None, now_str(), task_id),
     )
     _set_task_status(db, task, status)
     db.commit()
@@ -5085,6 +5277,120 @@ def task_set_dates(task_id):
         db.commit()
         _live_touch()
     return "", 204
+
+
+TIME_PERIODS = [("week", "This week"), ("last_week", "Last week"), ("month", "This month"), ("last_month", "Last month")]
+
+
+def _period_range(period, today):
+    monday = today - timedelta(days=today.weekday())
+    if period == "last_week":
+        return monday - timedelta(days=7), monday - timedelta(days=1)
+    if period == "month":
+        return today.replace(day=1), today
+    if period == "last_month":
+        end = today.replace(day=1) - timedelta(days=1)
+        return end.replace(day=1), end
+    return monday, monday + timedelta(days=6)
+
+
+@app.get("/tasks/time")
+@login_required
+def tasks_time():
+    """Where the tracked time went: by person, project, client and task for a chosen period.
+
+    Managers see everyone and can narrow to one person. Everyone else sees their own time.
+    """
+    db, user = get_db(), current_user()
+    scope = _task_scope(db, user)
+    today = datetime.now(APP_TIMEZONE).date()
+    period = request.args.get("period")
+    if period in dict(TIME_PERIODS):
+        session["tasks_time_period"] = period
+    else:
+        period = session.get("tasks_time_period", "week")
+        period = period if period in dict(TIME_PERIODS) else "week"
+    first, last = _period_range(period, today)
+    if user["role"] != "manager":
+        person = user["id"]
+    else:
+        person = user["id"] if scope["assignee"] == "me" else int(scope["assignee"]) if scope["assignee"].isdigit() else None
+    tasks = {item["id"]: item for item in scope["visible"]}
+    clients = {row["id"]: row["company_name"] for row in db.execute(
+        "SELECT p.id, c.name AS company_name FROM projects p LEFT JOIN companies c ON c.id = p.company_id")}
+    ever = {row["task_id"]: row["seconds"] for row in db.execute(
+        "SELECT task_id, SUM(seconds) AS seconds FROM work_task_time WHERE ended_at IS NOT NULL GROUP BY task_id")}
+
+    people, projects, companies, by_task, days, total = {}, {}, {}, {}, [], 0
+    for row in db.execute(
+        """SELECT t.id, t.task_id, t.user_id, t.started_at, t.seconds, u.name AS user_name FROM work_task_time t
+           LEFT JOIN users u ON u.id = t.user_id
+           WHERE t.ended_at IS NOT NULL AND substr(t.started_at, 1, 10) BETWEEN ? AND ?
+           ORDER BY t.started_at DESC, t.id DESC""", (first.isoformat(), last.isoformat())):
+        task = tasks.get(row["task_id"])
+        if not task or (person and row["user_id"] != person) or (scope["project"] and task["project_id"] != scope["project"]):
+            continue
+        seconds, who = row["seconds"], row["user_name"] or "Former user"
+        project = task["project"]["name"] if task["project"] else "No project"
+        client = (clients.get(task["project_id"]) or "Internal") if task["project"] else "No project"
+        total += seconds
+        people[who] = people.get(who, 0) + seconds
+        projects[project] = projects.get(project, 0) + seconds
+        companies[client] = companies.get(client, 0) + seconds
+        by_task[task["id"]] = by_task.get(task["id"], 0) + seconds
+        started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
+        label = f"{started.strftime('%A')}, {started.day} {started.strftime('%B')}"
+        if not days or days[-1]["label"] != label:
+            days.append({"label": label, "seconds": 0, "entries": []})
+        days[-1]["seconds"] += seconds
+        days[-1]["entries"].append({"who": who, "initials": _initials(row["user_name"]), "tone": (row["user_id"] or 0) % 5,
+                                    "task": task, "project": project, "label": _duration_label(seconds)})
+
+    def ranked(sums):
+        top = max(sums.values(), default=0)
+        return [{"name": name, "label": _duration_label(seconds), "share": round(100 * seconds / top) if top else 0}
+                for name, seconds in sorted(sums.items(), key=lambda pair: -pair[1])]
+
+    task_rows = []
+    for task_id, seconds in sorted(by_task.items(), key=lambda pair: -pair[1]):
+        task, estimate = tasks[task_id], (tasks[task_id]["estimate_minutes"] or 0) * 60
+        task_rows.append({"task": task, "label": _duration_label(seconds), "estimate": task["estimate"],
+                          "over": bool(estimate) and ever.get(task_id, 0) > estimate,
+                          "ever": _duration_label(ever.get(task_id, 0))})
+    for day in days:
+        day["total"] = _duration_label(day["seconds"])
+    return _tasks_page(
+        "tasks_time.html", scope, view="time", month=None, total=sum(len(day["entries"]) for day in days),
+        periods=TIME_PERIODS, period=period, total_label=_duration_label(total) if total else "No time",
+        range_label=f"{first.day} {first.strftime('%b')} to {last.day} {last.strftime('%b %Y')}",
+        people=ranked(people), by_project=ranked(projects), by_client=ranked(companies), task_rows=task_rows, days=days,
+        own_only=user["role"] != "manager",
+    )
+
+
+@app.post("/tasks/<int:task_id>/time")
+@login_required
+def task_time_add(task_id):
+    """Log time by hand, for work done without the timer running."""
+    _check_task_token()
+    db, user = get_db(), current_user()
+    _get_work_task(db, task_id)
+    today = datetime.now(APP_TIMEZONE).date()
+    try:
+        minutes = _parse_duration(request.form.get("duration"))
+        day = date.fromisoformat(request.form["day"]) if request.form.get("day") else today
+    except ValueError:
+        minutes, day = None, today
+    if not minutes or day > today:
+        flash("Enter how long you worked, like 1h 30m, on a day that is not in the future.", "error")
+    else:
+        started = datetime.combine(day, datetime.min.time()) + timedelta(hours=9)
+        db.execute("INSERT INTO work_task_time (task_id, user_id, started_at, ended_at, seconds) VALUES (?,?,?,?,?)",
+                   (task_id, user["id"], started.strftime("%Y-%m-%d %H:%M:%S"),
+                    (started + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S"), minutes * 60))
+        _log_task_event(db, task_id, f"logged {_duration_label(minutes * 60)} for {day.day} {day.strftime('%b')}")
+        db.commit()
+    return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/timer/start")
@@ -5145,11 +5451,13 @@ def task_set_status(task_id):
 def task_comment(task_id):
     _check_task_token()
     db = get_db()
-    _get_work_task(db, task_id)
+    task = _get_work_task(db, task_id)
     body = request.form.get("body", "").strip()[:5000]
     if body:
         _log_task_event(db, task_id, body, kind="comment")
+        _notify_task_comment(db, task, body)
         db.commit()
+        _live_touch()
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -5211,7 +5519,8 @@ def _init_notifications(db):
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read_at, id)")
     # lead_id is set on notifications about a lead (a follow-up handed to a manager).
-    _add_cols(db, "notifications", [("lead_id", "INTEGER REFERENCES leads(id) ON DELETE CASCADE")])
+    _add_cols(db, "notifications", [("lead_id", "INTEGER REFERENCES leads(id) ON DELETE CASCADE"),
+                                    ("due_on", "TEXT")])   # the due date a due-date reminder was about
 
 
 def _notify_task_assigned(db, user_id, task_id, task_title):
@@ -5223,6 +5532,69 @@ def _notify_task_assigned(db, user_id, task_id, task_title):
         "INSERT INTO notifications (user_id, kind, task_id, actor_id, title, body, created_at) VALUES (?,?,?,?,?,?,?)",
         (user_id, "task_assigned", task_id, actor["id"], f"{actor['name']} assigned you a task", task_title, now_str()),
     )
+
+
+def _notify_task_comment(db, task, comment):
+    """Tell the people on a task that someone else commented on it."""
+    actor = current_user()
+    people = {row["user_id"] for row in db.execute("SELECT user_id FROM work_task_assignees WHERE task_id=?", (task["id"],))}
+    people.add(task["created_by"])
+    for user_id in people - {actor["id"], None}:
+        if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+            continue
+        db.execute(
+            "INSERT INTO notifications (user_id, kind, task_id, actor_id, title, body, created_at) VALUES (?,?,?,?,?,?,?)",
+            (user_id, "task_comment", task["id"], actor["id"], f"{actor['name']} commented on {task['title'][:60]}",
+             comment[:140], now_str()))
+
+
+def _notify_due_tasks(db, user_id):
+    """Remind someone about their open tasks that are due tomorrow, due today, or just went overdue.
+
+    Each reminder is made once per task and due date. Tasks more than three days overdue stay
+    quiet, so the first run does not bury anyone. Returns how many were made.
+    """
+    today = datetime.now(APP_TIMEZONE).date()
+    made = 0
+    for row in db.execute(
+        """SELECT w.id, w.title, w.due_date FROM work_tasks w JOIN work_task_assignees a ON a.task_id = w.id
+           WHERE a.user_id=? AND w.status != 'Complete' AND w.due_date BETWEEN ? AND ?""",
+        (user_id, (today - timedelta(days=3)).isoformat(), (today + timedelta(days=1)).isoformat())).fetchall():
+        try:
+            due = date.fromisoformat(row["due_date"])
+        except ValueError:
+            continue
+        if due > today:
+            kind, title = "task_due_soon", "Due tomorrow"
+        elif due == today:
+            kind, title = "task_due", "Due today"
+        else:
+            kind, title = "task_overdue", f"Overdue since {due.day} {due.strftime('%b')}"
+        if db.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=? AND task_id=? AND due_on=?",
+                      (user_id, kind, row["id"], row["due_date"])).fetchone():
+            continue
+        db.execute("INSERT INTO notifications (user_id, kind, task_id, title, body, created_at, due_on) VALUES (?,?,?,?,?,?,?)",
+                   (user_id, kind, row["id"], title, row["title"], now_str(), row["due_date"]))
+        made += 1
+    return made
+
+
+@app.before_request
+def remind_about_due_tasks():
+    """Once a day per signed-in browser, on an ordinary page load, check for due tasks."""
+    if request.method != "GET" or request.endpoint in (None, "static", "favicon", "live_state", "live_socket"):
+        return
+    today = today_str()
+    if "user_id" not in session or session.get("due_checked") == today:
+        return
+    user = current_user()
+    if not user:
+        return
+    session["due_checked"] = today
+    db = get_db()
+    if _notify_due_tasks(db, user["id"]):
+        db.commit()
+        _live_touch()
 
 
 def _live_counts(db, user_id):

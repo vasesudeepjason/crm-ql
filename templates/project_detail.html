@@ -2,8 +2,8 @@
 {% import "_task_rows.html" as rows with context %}
 {% block title %}{{ project.name }} · Projects{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=16">
-<script src="{{ url_for('static', filename='tasks.js') }}?v=8" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=18">
+<script src="{{ url_for('static', filename='tasks.js') }}?v=10" defer></script>
 {% endblock %}
 {% block content %}
 <div class="page-header"><div><div class="project-card-top"><span class="project-status status-{{ project.status|slug }}">{{ project.status }}</span><span class="priority priority-{{ project.priority|lower }}">{{ project.priority }}</span></div><h1 class="page-title">{{ project.name }}</h1><p class="page-sub">{{ project.company_name or 'Internal project' }}{% if project.project_type %} · {{ project.project_type }}{% endif %} · Assigned to {{ project.project_manager_name }}</p></div><div class="project-head-actions">{% if can_manage %}<a class="btn btn-outline" href="{{ url_for('project_edit', project_id=project.id) }}">Edit project</a>{% endif %}<a class="btn btn-outline" href="{{ url_for('projects_list') }}">All projects</a></div></div>
@@ -70,6 +70,22 @@
       <div class="form-group"><label for="project-client">Client company</label><select id="project-client" name="company_id"><option value="">Internal project (no client)</option>{% for company in companies %}<option value="{{ company.id }}" {% if project.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>{% endfor %}</select></div>
       <div class="form-group"><label for="project-type">Project type</label><select id="project-type" name="project_type" required>{% if not project.project_type %}<option value="">Choose a type</option>{% endif %}{% for type in project_types %}<option {% if project.project_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}</select></div>
       <button class="btn btn-outline btn-block">Save</button></form>{% endif %}
+    <div class="card project-billing"><h2 class="section-title">Time and billing</h2>
+      <dl>
+        <div><dt>Time tracked</dt><dd{% if billing.over %} class="is-over"{% endif %}>{{ billing.tracked or 'None yet' }}{% if billing.estimated %} of {{ billing.estimated }} estimated{% endif %}</dd></div>
+        <div><dt>Budget</dt><dd>{{ '₹{:,.0f}'.format(project.budget) if project.budget is not none else 'Not set' }}</dd></div>
+        {% if billing.invoices %}
+        <div><dt>Invoiced to {{ project.company_name }}</dt><dd>₹{{ '{:,.0f}'.format(billing.invoiced) }} · ₹{{ '{:,.0f}'.format(billing.received) }} received</dd></div>
+        {% endif %}
+      </dl>
+      {% if billing.people %}
+      <ul class="project-billing-list" aria-label="Time by person">{% for person in billing.people %}<li><span>{{ person.name }}</span><strong>{{ person.label }}</strong></li>{% endfor %}</ul>
+      {% endif %}
+      {% if billing.invoices %}
+      <p class="page-sub">All invoices to this client, not only this project.</p>
+      <ul class="project-billing-list" aria-label="Invoices to this client">{% for invoice in billing.invoices %}<li><a href="{{ url_for('invoice_detail', invoice_id=invoice.id) }}">{{ invoice.invoice_no }}</a><span>{{ invoice.invoice_date }}</span><strong>₹{{ '{:,.0f}'.format(invoice.total_amount or 0) }}</strong></li>{% endfor %}</ul>
+      {% endif %}
+    </div>
     <div class="card"><h2 class="section-title">Project team</h2><div class="project-team">{% for member in members %}<div><span class="team-avatar">{{ member.name[:1]|upper }}</span><span>{{ member.name }}</span><small>{{ member.role }}</small></div>{% endfor %}</div></div>
     <div class="card"><h2 class="section-title">Activity</h2><div class="project-activity">{% for activity in activities %}<div><strong>{{ activity.event }}</strong>{% if activity.detail %}<span>{{ activity.detail }}</span>{% endif %}<small>{{ activity.user_name or 'System' }} · {{ activity.created_at }}</small></div>{% else %}<div class="empty-state">No project updates yet.</div>{% endfor %}</div></div>
   </aside>

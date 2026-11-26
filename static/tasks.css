@@ -676,3 +676,132 @@ html:root body .tk-dates input[type="time"] { flex: 0 1 112px; }
     linear-gradient(to right, var(--tk-dayline) 1px, transparent 1px);
   background-size: calc(96 * var(--tk-day)) 100%, calc(4 * var(--tk-day)) 100%, calc(2 * var(--tk-day)) 100%;
 }
+
+/* ---- Estimate and manual time on a task ---- */
+html:root body .tk-estimate { --control-height: 32px; flex: 1; min-width: 0; }
+.tk-time-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+html:root body .tk-time-add input { --control-height: 32px; min-width: 0; font-size: 14px; }
+html:root body .tk-time-add input[type="text"] { flex: 1 1 200px; }
+html:root body .tk-time-add input[type="date"] { flex: 0 1 150px; }
+
+/* ---- Time report ---- */
+.tk-time-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin-bottom: 16px; }
+.tk-time-card { min-width: 0; padding: 16px; background: var(--content-panel); border: 1px solid var(--tk-line); border-radius: var(--panel-radius); }
+.tk-time-wide { margin-bottom: 16px; }
+.tk-time-card h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font: 525 15px/1.3 var(--font-display); color: var(--text); }
+.tk-time-card ul { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.tk-time-card li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; }
+.tk-time-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 525 14px/1.4 var(--font-body); color: var(--text); }
+.tk-time-amount { font: 525 14px/1.4 var(--font-body); font-variant-numeric: tabular-nums; color: var(--text); }
+.tk-time-bar { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 2px; background: var(--control-muted); }
+.tk-time-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--tk-progress); }
+.tk-time-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px 96px; gap: 12px; align-items: center; min-height: 40px; padding: 4px 0; border-top: 1px solid var(--tk-line); font: 525 14px/1.4 var(--font-body); font-variant-numeric: tabular-nums; }
+.tk-time-row.is-head { min-height: 0; padding-bottom: 8px; border-top: 0; font: 525 12px/1.4 var(--font-body); letter-spacing: .025em; color: var(--text-soft); }
+.tk-time-row .is-over { color: color-mix(in srgb, var(--danger) 75%, var(--text)); font-weight: 630; }
+.tk-time-task { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tk-time-card .tk-timerow-name { display: grid; }
+.tk-time-card .tk-timerow-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-time-card .tk-subrow:first-of-type { border-top: 0; }
+@media (max-width: 820px) {
+  .tk-time-row { grid-template-columns: minmax(0, 1fr) 72px 72px; font-size: 13px; }
+  .tk-time-row > :nth-child(4) { display: none; }
+  .tk-time-task { flex-wrap: wrap; }
+  .tk-time-card .tk-title { white-space: normal; }
+}
+
+/* ---- Gantt: project groups, and dragging bars by touch ---- */
+.tk-gantt-grouprow .tk-gantt-side, .tk-gantt-grouprow .tk-gantt-track,
+.tk-gantt-grouprow:hover .tk-gantt-side, .tk-gantt-grouprow:hover .tk-gantt-track { background-color: var(--panel-tint); }
+.tk-gantt-grouprow .tk-gantt-name { color: var(--text-soft); }
+.tk-gantt-grouprow strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13px/1.4 var(--font-body); color: var(--text); }
+.tk-gantt-summary {
+  position: absolute; top: 17px; height: 8px; border-radius: 4px; pointer-events: none;
+  left: calc(var(--s) * var(--tk-day) + 1px); width: max(8px, calc(var(--n) * var(--tk-day) - 2px));
+  background: color-mix(in srgb, var(--text-soft) 45%, var(--content-panel));
+}
+/* A sideways drag that starts on a bar moves the bar; up and down still scrolls the page. */
+.tk-gantt-bar:not([data-clipped]) { touch-action: pan-y; }
+
+/* ---- Task page: one readable column, a properties card, quiet fields, matching section titles ---- */
+.tk-panel-main { display: grid; grid-template-columns: minmax(0, 920px); justify-content: center; align-content: start; }
+.tk-crumbs { margin-bottom: 12px; }
+.tk-save { margin-inline-start: auto; font: 525 12px/1.4 var(--font-body); color: var(--text-soft); white-space: nowrap; }
+.tk-save:empty { display: none; }
+.tk-save[data-state="done"]::before { content: "✓ "; color: var(--tk-complete); }
+.tk-save[data-state="error"] { color: var(--danger); white-space: normal; }
+
+/* The task name reads as a heading until it is pointed at or edited. */
+html:root body input.tk-title-input {
+  width: calc(100% + 20px); max-width: none; min-height: 48px; padding: 4px 10px; margin: 0 -10px 16px;
+  border-color: transparent; background: transparent; text-overflow: ellipsis;
+  font: 630 28px/1.25 var(--font-display); letter-spacing: -.01em; color: var(--text);
+}
+html:root body input.tk-title-input:hover:enabled { background: var(--tk-soft); }
+html:root body input.tk-title-input:focus { border-color: var(--accent); background: var(--content-panel); }
+
+/* Properties sit together in one card. Columns follow the room the card has, not the screen. */
+.tk-form { container: tk-form / inline-size; }
+.tk-fields {
+  gap: 2px 40px; padding: 10px 16px; background: var(--panel-tint);
+  border: 1px solid var(--tk-line); border-radius: var(--panel-radius);
+}
+.tk-field { grid-template-columns: 88px minmax(0, 1fr); }
+@container tk-form (min-width: 641px) { .tk-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container tk-form (max-width: 640px) { .tk-fields { grid-template-columns: minmax(0, 1fr); } }
+html:root body input.tk-estimate { --control-height: 32px; flex: 0 1 180px; min-width: 0; }
+html:root body .tk-fields .tk-project-select select { --control-height: 32px; flex: 1; min-width: 0; }
+@media (hover: hover) {
+  /* With a mouse, a field shows its box when pointed at or focused. Touch screens keep the boxes. */
+  html:root body .tk-fields :is(select, input:not([type="checkbox"])):not(:hover, :focus) { border-color: transparent; background-color: transparent; }
+  html:root body .tk-fields :is(select, input:not([type="checkbox"])):hover:not(:focus) { background-color: var(--content-panel); }
+}
+
+/* Dates: each date says which one it is, so nothing is left hanging when the row wraps. */
+.tk-dates { gap: 6px 24px; }
+.tk-dates > span.tk-dateset { flex: 0 1 auto; }
+.tk-date-tag { flex: none; width: 34px; font: 525 12px/1.4 var(--font-body); color: var(--text-soft); }
+html:root body .tk-dates input[type="date"] { flex: 0 1 150px; }
+html:root body .tk-dates input[type="time"] { flex: 0 1 118px; }
+@container tk-form (max-width: 520px) {
+  .tk-field-dates { grid-template-columns: minmax(0, 1fr); gap: 4px; padding-block: 8px; }
+  .tk-dates > span.tk-dateset { flex: 1 1 100%; flex-wrap: nowrap; }
+  html:root body .tk-dates input[type="date"] { flex: 1 1 130px; }
+  html:root body .tk-dates input[type="time"] { flex: 1 1 100px; }
+  /* Room for "12:00 PM" in full; touching the field still opens the time picker. */
+  .tk-dates input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
+  /* The people list opens from the right edge so it stays on a narrow screen. */
+  .tk-picker-menu { left: auto; right: 0; }
+}
+
+/* Sections under the card share one title style and one rhythm. */
+.tk-section-title, .tk-attach-head h2, .tk-subsection h2 {
+  display: flex; align-items: center; gap: 8px; margin: 0; font: 630 15px/1.3 var(--font-display); color: var(--text);
+}
+.tk-subsection h2 { margin-bottom: 10px; }
+.tk-description { gap: 10px; margin-top: 28px; }
+.tk-linksec, .tk-attachments, .tk-subsection { margin-top: 28px; }
+html:root body .tk-description textarea { field-sizing: content; min-height: 120px; max-height: 60vh; line-height: 1.55; }
+.tk-linksec .tk-links { margin-top: 10px; }
+.tk-linksec .tk-link-form { margin-top: 10px; }
+html:root body .tk-link-row input { max-width: 520px; }
+
+/* Empty attachments show where files can be dropped. */
+.tk-dropzone {
+  display: grid; justify-items: center; gap: 4px; margin-top: 10px; padding: 20px 16px; text-align: center;
+  color: var(--text-soft); border: 1px dashed var(--control-line); border-radius: var(--panel-radius);
+}
+.tk-dropzone-lead { margin: 4px 0 0; font: 525 14px/1.4 var(--font-body); color: var(--text); }
+.tk-dropzone .tk-attach-hint { margin: 0; }
+.tk-panel-main.is-dropping .tk-dropzone { border-color: var(--accent); background: var(--tk-soft); }
+.tk-panel-main.is-dropping .tk-attachments:has(.tk-dropzone) { outline: 0; background: none; }
+@media (hover: none) {
+  .tk-dropzone { padding: 12px 16px; }
+  .tk-dropzone svg, .tk-dropzone-lead { display: none; }
+}
+
+@media (max-width: 820px) {
+  html:root body input.tk-title-input { width: 100%; margin-inline: 0; padding-inline: 0; font-size: 22px; }
+  html:root body input.tk-title-input:focus { padding-inline: 8px; }
+  .tk-fields { padding: 8px 12px; }
+  html:root body .tk-link-row input { max-width: none; }
+}

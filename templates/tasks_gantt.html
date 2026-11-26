@@ -6,12 +6,22 @@
 {% block tasks_toolbar %}
 {% set closed_q = None if show_closed else 0 %}
 {# Today opens the day scale at the current time; once there it scrolls back to now. #}
-{% if zoom == 'day' %}<a class="tk-chip" href="#gantt-today" data-gantt-today title="Go to the current time">Today</a>
+{% if zoom == 'day' and not day_paged %}<a class="tk-chip" href="#gantt-today" data-gantt-today title="Go to the current time">Today</a>
 {% else %}<a class="tk-chip" href="{{ url_for('tasks_gantt', zoom='day', assignee=assignee or None, closed=closed_q, project=project_filter) }}" data-gantt-fresh title="Go to the current time on the day scale">Today</a>{% endif %}
 {% for key, label in [('day', 'Day'), ('week', 'Week'), ('month', 'Month'), ('quarter', 'Quarter')] %}
 <a class="tk-chip{% if zoom == key %} is-on{% endif %}" aria-pressed="{{ 'true' if zoom == key else 'false' }}" data-gantt-fresh
    href="{{ url_for('tasks_gantt', zoom=key, assignee=assignee or None, closed=closed_q, project=project_filter) }}">{{ label }}</a>
 {% endfor %}
+{% if zoom == 'day' %}
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_gantt', zoom='day', start=prev_start, assignee=assignee or None, closed=closed_q, project=project_filter) }}" aria-label="A week earlier" title="A week earlier">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.500 5.500 8 10 12.500"/></svg>
+</a>
+<a class="tk-chip tk-chip-icon" href="{{ url_for('tasks_gantt', zoom='day', start=next_start, assignee=assignee or None, closed=closed_q, project=project_filter) }}" aria-label="A week later" title="A week later">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.500 10.500 8 6 12.500"/></svg>
+</a>
+{% endif %}
+<a class="tk-chip{% if grouped %} is-on{% endif %}" aria-pressed="{{ 'true' if grouped else 'false' }}"
+   href="{{ url_for('tasks_gantt', group='none' if grouped else 'project', start=request.args.get('start') if zoom == 'day' else None, assignee=assignee or None, closed=closed_q, project=project_filter) }}">Group by project</a>
 {% endblock %}
 
 {% block tasks_body %}
@@ -38,8 +48,22 @@
       </div>
     </div>
     <div class="tk-gantt-body">
-      <span class="tk-gantt-today" id="gantt-today" style="--t: {{ today_offset }}" aria-hidden="true"></span>
+      {% if today_offset != '' %}<span class="tk-gantt-today" id="gantt-today" style="--t: {{ today_offset }}" aria-hidden="true"></span>{% endif %}
       {% for row in rows %}
+      {% if row.group is defined %}
+      <div class="tk-gantt-row tk-gantt-grouprow">
+        <div class="tk-gantt-side">
+          <span class="tk-gantt-name">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.400" stroke-linejoin="round"><path d="M2 4.500h4l1.200 1.500H14v6.500H2Z"/></svg>
+            <strong>{{ row.group }}</strong>
+          </span>
+          <span class="tk-gantt-duecol tk-muted">{{ row.count }} task{{ '' if row.count == 1 else 's' }}</span>
+        </div>
+        <div class="tk-gantt-track">
+          {% if row.summary %}<span class="tk-gantt-summary" style="--s: {{ row.summary.start }}; --n: {{ row.summary.days }}" aria-hidden="true"></span>{% endif %}
+        </div>
+      </div>
+      {% else %}
       {% set task = row.task %}
       <div class="tk-gantt-row tk-st-{{ task.status|slug }}{% if row.sub %} is-sub{% endif %}{% if task.status == 'Complete' %} is-done{% endif %}"
            data-search-item data-search="{{ task.title|lower }} {{ task.tags|map(attribute='name')|join(' ') }} {{ task.assignees|map(attribute='name')|join(' ')|lower }}">
@@ -65,6 +89,7 @@
           {% endif %}
         </div>
       </div>
+      {% endif %}
       {% endfor %}
       <div class="tk-gantt-row tk-gantt-addrow">
         <div class="tk-gantt-side">

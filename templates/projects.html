@@ -14,14 +14,27 @@
 </div>
 
 <turbo-frame id="project-views" target="_top">
+<form method="get" action="{{ url_for('projects_list') }}" class="project-filters" aria-label="Filter projects">
+  <select name="type" aria-label="Filter by project type" onchange="this.form.requestSubmit()">
+    <option value="">All types</option>
+    {% for type in project_types %}<option{% if type == type_filter %} selected{% endif %}>{{ type }}</option>{% endfor %}
+  </select>
+  <select name="client" aria-label="Filter by client" onchange="this.form.requestSubmit()">
+    <option value="">All clients</option>
+    <option value="internal"{% if client_filter == 'internal' %} selected{% endif %}>Internal projects</option>
+    {% for client in clients %}<option value="{{ client.id }}"{% if client_filter == client.id|string %} selected{% endif %}>{{ client.name }}</option>{% endfor %}
+  </select>
+  {% if type_filter or client_filter %}<a class="btn btn-outline btn-sm" href="{{ url_for('projects_list') }}">Clear filters</a>{% endif %}
+  <noscript><button type="submit" class="btn btn-outline btn-sm">Apply</button></noscript>
+</form>
 <nav class="view-switch project-view-switch" aria-label="Project view">
   {% for key, label in [('cards', 'Cards'), ('details', 'Details')] %}
-  <a href="{{ url_for('projects_list', view=key) }}" data-turbo-frame="project-views" data-turbo-action="advance"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
+  <a href="{{ url_for('projects_list', view=key, type=type_filter or None, client=client_filter or None) }}" data-turbo-frame="project-views" data-turbo-action="advance"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
   {% endfor %}
 </nav>
 
 {% if not projects %}
-<div class="empty-state project-empty">No projects are assigned to you yet.{% if current_user.role == 'manager' %} Create one from a won lead or start an independent internal project.{% endif %}</div>
+<div class="empty-state project-empty">{% if type_filter or client_filter %}No projects match these filters.{% else %}No projects are assigned to you yet.{% if current_user.role == 'manager' %} Create one from a won lead or start an independent internal project.{% endif %}{% endif %}</div>
 {% elif view == 'details' %}
 <div class="table-card project-details-table" role="region" aria-label="Project details" tabindex="0">
   <table aria-label="Projects">

@@ -109,6 +109,29 @@
       {% endif %}
     </section>
 
+    <section class="rc-card" aria-labelledby="co-projects">
+      <header class="rc-card-head"><h2 id="co-projects">Projects</h2><span class="rc-count">{{ projects|length }}</span></header>
+      {% if projects %}
+      <div class="rc-table-wrap is-flush">
+        <table class="rc-table is-compact">
+          <thead><tr><th>Project</th><th>Type</th><th>Status</th><th>Target date</th></tr></thead>
+          <tbody>
+            {% for project in projects %}
+            <tr class="clickable-row">
+              <td><a class="row-link" href="{{ url_for('project_detail', project_id=project.id) }}">{{ project.name }}</a></td>
+              <td>{{ project.project_type or '—' }}</td>
+              <td>{{ project.status }}</td>
+              <td>{{ project.target_date or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="rc-none rc-pad">No projects for this company{{ '' if current_user.role == 'manager' else ' that you are part of' }}.</p>
+      {% endif %}
+    </section>
+
     {% if current_user.role == 'manager' %}
     <section class="rc-card" aria-labelledby="co-invoices">
       <header class="rc-card-head"><h2 id="co-invoices">Invoices</h2><span class="rc-count">{{ invoices|length }}</span></header>
