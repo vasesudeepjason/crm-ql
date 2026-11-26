@@ -46,7 +46,7 @@ html { scrollbar-gutter: stable; }
   place-items: center;
   width: 100%;
   color: var(--text);
-  font: 700 21px var(--font-display);
+  font: 800 21px var(--font-display);
   letter-spacing: -.065em;
 }
 .rail-categories { display: grid; gap: 6px; padding-top: 14px; }
@@ -91,7 +91,7 @@ html { scrollbar-gutter: stable; }
 .module-group { padding: 15px 10px; }
 .module-group h2 {
   margin: 0 6px 12px;
-  font: 600 1rem/1.3 var(--font-display);
+  font: 700 1rem/1.3 var(--font-display);
   color: var(--text);
 }
 .module-link {
@@ -110,7 +110,7 @@ html { scrollbar-gutter: stable; }
   color: var(--accent);
   background: var(--accent-tint);
   border-color: var(--accent-line);
-  font-weight: 600;
+  font-weight: 700;
 }
 .module-account { margin-top: auto; border-top: 1px solid var(--border-strong); padding-block: 12px; }
 @media (prefers-reduced-motion: reduce) {

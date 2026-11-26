@@ -2,11 +2,11 @@
 {% import "_task_rows.html" as rows with context %}
 {% block title %}{{ project.name }} · Projects{% endblock %}
 {% block page_styles %}
-<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=13">
+<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css') }}?v=14">
 <script src="{{ url_for('static', filename='tasks.js') }}?v=8" defer></script>
 {% endblock %}
 {% block content %}
-<div class="page-header"><div><div class="project-card-top"><span class="project-status status-{{ project.status|slug }}">{{ project.status }}</span><span class="priority priority-{{ project.priority|lower }}">{{ project.priority }}</span></div><h1 class="page-title">{{ project.name }}</h1><p class="page-sub">{{ project.company_name or 'Internal project' }}{% if project.project_type %} · {{ project.project_type }}{% endif %} · Assigned to {{ project.project_manager_name }}</p></div><a class="btn btn-outline" href="{{ url_for('projects_list') }}">All projects</a></div>
+<div class="page-header"><div><div class="project-card-top"><span class="project-status status-{{ project.status|slug }}">{{ project.status }}</span><span class="priority priority-{{ project.priority|lower }}">{{ project.priority }}</span></div><h1 class="page-title">{{ project.name }}</h1><p class="page-sub">{{ project.company_name or 'Internal project' }}{% if project.project_type %} · {{ project.project_type }}{% endif %} · Assigned to {{ project.project_manager_name }}</p></div><div class="project-head-actions">{% if can_manage %}<a class="btn btn-outline" href="{{ url_for('project_edit', project_id=project.id) }}">Edit project</a>{% endif %}<a class="btn btn-outline" href="{{ url_for('projects_list') }}">All projects</a></div></div>
 
 <div class="project-detail-grid">
   <section>
@@ -65,7 +65,7 @@
     </div>
   </section>
   <aside>
-    {% if can_manage %}<form method="post" action="{{ url_for('project_update_status', project_id=project.id) }}" class="card project-status-form"><h2 class="section-title">Project status</h2><select name="status" aria-label="Project status">{% for status in ['Planning','In Progress','On Hold','Client Review','Completed','Cancelled'] %}<option {% if project.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select><button class="btn btn-outline btn-block">Update status</button></form>
+    {% if can_manage %}<form method="post" action="{{ url_for('project_update_status', project_id=project.id) }}" class="card project-status-form"><h2 class="section-title">Project status</h2><input type="hidden" name="token" value="{{ token }}"><select name="status" aria-label="Project status">{% for status in ['Planning','In Progress','On Hold','Client Review','Completed','Cancelled'] %}<option {% if project.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select><button class="btn btn-outline btn-block">Update status</button></form>
     <form method="post" action="{{ url_for('project_update_attribution', project_id=project.id) }}" class="card project-status-form"><h2 class="section-title">Client and type</h2><input type="hidden" name="token" value="{{ token }}">
       <div class="form-group"><label for="project-client">Client company</label><select id="project-client" name="company_id"><option value="">Internal project (no client)</option>{% for company in companies %}<option value="{{ company.id }}" {% if project.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>{% endfor %}</select></div>
       <div class="form-group"><label for="project-type">Project type</label><select id="project-type" name="project_type" required>{% if not project.project_type %}<option value="">Choose a type</option>{% endif %}{% for type in project_types %}<option {% if project.project_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}</select></div>

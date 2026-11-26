@@ -2333,6 +2333,7 @@ def project_new():
     team_users = db.execute("SELECT id,name,role FROM users ORDER BY name").fetchall()
     selected_lead_id = request.values.get("lead_id", type=int)
     if request.method == "POST":
+        _check_task_token()
         name = request.form.get("name", "").strip()
         lead_id = request.form.get("lead_id", type=int)
         manager_id = request.form.get("project_manager_id", type=int)
@@ -2388,7 +2389,9 @@ def project_new():
         return redirect(url_for("project_detail", project_id=project_id))
     return render_template("project_form.html", won_leads=won_leads, team_users=team_users,
         companies=_project_client_options(db), project_types=PROJECT_TYPES,
-        statuses=PROJECT_STATUSES, priorities=PRIORITIES, selected_lead_id=selected_lead_id)
+        statuses=PROJECT_STATUSES, priorities=PRIORITIES, selected_lead_id=selected_lead_id,
+        selected_company_id=next((lead["company_id"] for lead in won_leads if lead["id"] == selected_lead_id), None),
+        project=None, member_ids={user["id"]}, token=_task_token())
 
 
 def _project_client_options(db):
@@ -2465,9 +2468,76 @@ def project_detail(project_id):
     return response
 
 
+@app.route("/projects/<int:project_id>/edit", methods=["GET", "POST"])
+@login_required
+def project_edit(project_id):
+    db, user = get_db(), current_user()
+    project = _project_detail_row(db, project_id, user)
+    if not project or not can_manage_project(user, project):
+        flash("Only the project owner or a manager can edit this project.", "error")
+        return redirect(url_for("projects_list"))
+    team_users = db.execute("SELECT id,name,role FROM users ORDER BY name").fetchall()
+    members = {row["user_id"] for row in db.execute("SELECT user_id FROM project_members WHERE project_id=?", (project_id,))}
+    here = redirect(url_for("project_edit", project_id=project_id))
+    if request.method == "POST":
+        _check_task_token()
+        form = request.form
+        name = form.get("name", "").strip()
+        manager_id = form.get("project_manager_id", type=int)
+        status, priority, project_type = form.get("status"), form.get("priority"), form.get("project_type", "")
+        company_id = form.get("company_id", type=int) or None
+        valid_ids = {row["id"] for row in team_users}
+        if (not name or manager_id not in valid_ids or status not in PROJECT_STATUSES or priority not in PRIORITIES
+                or project_type not in PROJECT_TYPES):
+            flash("Enter a project name, owner, type, status and priority.", "error")
+            return here
+        if company_id and not db.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
+            flash("Choose a valid client company.", "error")
+            return here
+        try:
+            budget = float(form["budget"]) if form.get("budget", "").strip() else None
+            start = date.fromisoformat(form["start_date"]).isoformat() if form.get("start_date") else None
+            target = date.fromisoformat(form["target_date"]).isoformat() if form.get("target_date") else None
+        except ValueError:
+            flash("Enter a valid budget and dates.", "error")
+            return here
+        if start and target and target < start:
+            flash("Choose a target date on or after the start date.", "error")
+            return here
+        description = form.get("description", "").strip()
+        wanted = ({uid for uid in form.getlist("member_ids", type=int)} | {manager_id}) & valid_ids
+        new = {"name": name, "project_type": project_type, "company_id": company_id, "project_manager_id": manager_id,
+               "status": status, "priority": priority, "budget": budget, "start_date": start, "target_date": target,
+               "description": description}
+        labels = {"name": "name", "project_type": "type", "company_id": "client", "project_manager_id": "owner",
+                  "status": "status", "priority": "priority", "budget": "budget", "start_date": "start date",
+                  "target_date": "target date", "description": "scope notes"}
+        changed = [labels[key] for key, value in new.items() if value != (project[key] if key != "description" else project[key] or "")]
+        if wanted != members:
+            changed.append("team")
+        if changed:
+            now = now_str()
+            db.execute("""UPDATE projects SET name=?,project_type=?,company_id=?,project_manager_id=?,status=?,priority=?,
+                          budget=?,start_date=?,target_date=?,description=?,updated_at=? WHERE id=?""",
+                       (*new.values(), now, project_id))
+            for uid in wanted - members:
+                db.execute("INSERT INTO project_members (project_id,user_id,added_at) VALUES (?,?,?)", (project_id, uid, now))
+            for uid in members - wanted:
+                db.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, uid))
+            log_project_event(db, project_id, "Project edited", "Changed: " + ", ".join(changed))
+            db.commit()
+            log_activity("Edited project", "project", project_id, name, ", ".join(changed))
+            flash("Project updated.", "success")
+        return redirect(url_for("project_detail", project_id=project_id))
+    return render_template("project_form.html", project=project, member_ids=members, team_users=team_users,
+        won_leads=[], companies=_project_client_options(db), project_types=PROJECT_TYPES, statuses=PROJECT_STATUSES,
+        priorities=PRIORITIES, selected_lead_id=None, selected_company_id=project["company_id"], token=_task_token())
+
+
 @app.route("/projects/<int:project_id>/status", methods=["POST"])
 @login_required
 def project_update_status(project_id):
+    _check_task_token()
     db = get_db(); user = current_user(); project = _project_detail_row(db, project_id, user)
     if not project or not can_manage_project(user, project):
         flash("Only the project owner or a manager can update this project.", "error")
@@ -4310,10 +4380,28 @@ def _task_views(db, rows):
     return views
 
 
+def _visible_project_ids(db, user):
+    clause, params = visible_projects_clause(user, "p")
+    return {row["id"] for row in db.execute(f"SELECT p.id FROM projects p WHERE {clause}", params)}
+
+
+def _can_see_task(db, user, task):
+    """Who may open a task.
+
+    Managers see every task. Everyone else sees tasks that belong to no project, tasks in a
+    project they can see, and any task they created or are assigned to.
+    """
+    if user["role"] == "manager" or not task["project_id"] or task["created_by"] == user["id"]:
+        return True
+    if db.execute("SELECT 1 FROM work_task_assignees WHERE task_id=? AND user_id=?", (task["id"], user["id"])).fetchone():
+        return True
+    return task["project_id"] in _visible_project_ids(db, user)
+
+
 def _get_work_task(db, task_id):
     row = db.execute("SELECT * FROM work_tasks WHERE id=?", (task_id,)).fetchone()
-    if not row:
-        abort(404)
+    if not row or not _can_see_task(db, current_user(), row):
+        abort(404)   # the same answer for "no such task" and "not yours to see"
     return row
 
 
@@ -4357,6 +4445,11 @@ def _project_task_views(db, project_id):
 def _task_scope(db, user):
     """Tasks after the assignee and closed filters, shared by the list, board and calendar."""
     views = _task_views(db, db.execute("SELECT * FROM work_tasks ORDER BY id").fetchall())
+    if user["role"] != "manager":
+        open_projects = _visible_project_ids(db, user)
+        views = [item for item in views
+                 if not item["project_id"] or item["project_id"] in open_projects or item["created_by"] == user["id"]
+                 or any(person["id"] == user["id"] for person in item["assignees"])]
     by_id = {item["id"]: item for item in views}
     top = []
     for item in views:
@@ -4654,7 +4747,7 @@ def task_create():
         if parent["parent_id"]:
             abort(400)  # one level of subtasks only
         project_id = parent["project_id"]  # a subtask always belongs to its parent's project
-    elif project_id and not db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
+    elif project_id and project_id not in _visible_project_ids(db, user):
         abort(400)
     default = url_for("task_detail", task_id=parent_id) if parent_id else url_for("tasks_list")
     if not title or len(title) > 200 or status not in WORK_STATUSES:
@@ -4769,9 +4862,11 @@ def task_file_upload(task_id):
 @app.get("/tasks/files/<int:file_id>")
 @login_required
 def task_file(file_id):
-    row = get_db().execute("SELECT * FROM work_task_files WHERE id=?", (file_id,)).fetchone()
+    db = get_db()
+    row = db.execute("SELECT * FROM work_task_files WHERE id=?", (file_id,)).fetchone()
     if not row:
         abort(404)
+    _get_work_task(db, row["task_id"])
     path = os.path.join(_task_file_dir(), row["stored_name"])
     if not os.path.isfile(path):
         abort(404)
@@ -4927,6 +5022,8 @@ def task_update(task_id):
             _log_task_event(db, task_id, f"removed tag {tag}")
     if "project_id" in form and not task["parent_id"]:
         new_project = form.get("project_id", type=int)
+        if new_project and new_project != task["project_id"] and new_project not in _visible_project_ids(db, current_user()):
+            new_project = task["project_id"]
         project_row = db.execute("SELECT id, name FROM projects WHERE id=?", (new_project,)).fetchone() if new_project else None
         new_project = project_row["id"] if project_row else None
         if new_project != task["project_id"]:
@@ -5020,6 +5117,7 @@ def task_time_delete(entry_id):
     entry = db.execute("SELECT * FROM work_task_time WHERE id=?", (entry_id,)).fetchone()
     if not entry:
         abort(404)
+    _get_work_task(db, entry["task_id"])
     if entry["ended_at"] is None or (user["role"] != "manager" and entry["user_id"] != user["id"]):
         abort(403)
     db.execute("DELETE FROM work_task_time WHERE id=?", (entry_id,))
