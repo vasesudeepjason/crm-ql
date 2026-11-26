@@ -506,6 +506,73 @@
     scroller.scrollBy({ left: (bar.getBoundingClientRect().left - (box.left + side + 48)) / scale, behavior: calm ? 'auto' : 'smooth' });
   }, true);
 
+  // ---- Gantt: right-click a bar for its own menu (Open task, Unschedule) instead of the browser's ----
+  var ganttMenu = null, ganttMenuFor = null;
+  function closeGanttMenu(refocus) {
+    if (!ganttMenu) return;
+    ganttMenu.remove();
+    ganttMenu = null;
+    if (refocus && ganttMenuFor && ganttMenuFor.isConnected) ganttMenuFor.focus();
+    ganttMenuFor = null;
+  }
+  function openGanttMenu(bar, x, y) {
+    closeGanttMenu(false);
+    endDrag(true);
+    hideHints();
+    ganttMenuFor = bar;
+    ganttMenu = document.createElement('div');
+    ganttMenu.className = 'tk-gantt-menu';
+    ganttMenu.setAttribute('role', 'menu');
+    ganttMenu.setAttribute('aria-label', 'Task on the timeline');
+    [['open', 'Open task'], ['unschedule', 'Unschedule']].forEach(function (item) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('role', 'menuitem');
+      button.dataset.ganttAct = item[0];
+      button.textContent = item[1];
+      ganttMenu.appendChild(button);
+    });
+    // Inside the page element so it takes the page's colours; placed by the pointer, kept on screen.
+    (bar.closest('.tk-page') || document.body).appendChild(ganttMenu);
+    var box = ganttMenu.getBoundingClientRect();
+    ganttMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - box.width - 8)) + 'px';
+    ganttMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - box.height - 8)) + 'px';
+    ganttMenu.querySelector('button').focus();
+  }
+  document.addEventListener('contextmenu', function (event) {
+    var bar = event.target.closest && event.target.closest('.tk-gantt-bar[data-task-id]');
+    if (!bar) { closeGanttMenu(false); return; }
+    event.preventDefault();
+    var rect = bar.getBoundingClientRect();
+    // The keyboard's menu key reports no pointer position: open under the bar instead.
+    var keyed = event.clientX === 0 && event.clientY === 0;
+    openGanttMenu(bar, keyed ? rect.left : event.clientX, keyed ? rect.bottom : event.clientY);
+  });
+  document.addEventListener('click', function (event) {
+    if (!ganttMenu) return;
+    var item = event.target.closest && event.target.closest('[data-gantt-act]');
+    var bar = ganttMenuFor;
+    closeGanttMenu(false);
+    if (!item || !bar) return;
+    if (item.dataset.ganttAct === 'open') bar.click();
+    else saveDates(bar.dataset.taskId, { start_date: '', due_date: '' });
+  });
+  document.addEventListener('pointerdown', function (event) {
+    if (ganttMenu && !ganttMenu.contains(event.target)) closeGanttMenu(false);
+  }, true);
+  document.addEventListener('keydown', function (event) {
+    if (!ganttMenu) return;
+    var items = Array.prototype.slice.call(ganttMenu.querySelectorAll('button'));
+    var at = items.indexOf(document.activeElement);
+    if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); closeGanttMenu(true); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); items[(at + 1) % items.length].focus(); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); items[(at + items.length - 1) % items.length].focus(); }
+  });
+  document.addEventListener('scroll', function () { closeGanttMenu(false); }, true);
+  window.addEventListener('resize', function () { closeGanttMenu(false); });
+  window.addEventListener('blur', function () { closeGanttMenu(false); });
+  document.addEventListener('turbo:before-render', function () { closeGanttMenu(false); });
+
   // ---- "Saving…" then "Saved" beside the breadcrumb while the task saves itself ----
   var savedAt = 0;
   var saveTimer = null;

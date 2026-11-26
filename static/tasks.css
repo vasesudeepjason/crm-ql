@@ -758,11 +758,11 @@ html:root body .tk-fields .tk-project-select select { --control-height: 32px; fl
 
 /* Dates: each date says which one it is, so nothing is left hanging when the row wraps. */
 .tk-dates { gap: 6px 24px; }
-.tk-dates > span.tk-dateset { flex: 0 1 auto; }
+.tk-dates > span.tk-dateset { flex: 0 1 auto; flex-wrap: nowrap; }
 .tk-date-tag { flex: none; width: 34px; font: 525 12px/1.4 var(--font-body); color: var(--text-soft); }
 html:root body .tk-dates input[type="date"] { flex: 0 1 150px; }
 html:root body .tk-dates input[type="time"] { flex: 0 1 118px; }
-@container tk-form (max-width: 520px) {
+@container tk-form (max-width: 420px) {
   .tk-field-dates { grid-template-columns: minmax(0, 1fr); gap: 4px; padding-block: 8px; }
   .tk-dates > span.tk-dateset { flex: 1 1 100%; flex-wrap: nowrap; }
   html:root body .tk-dates input[type="date"] { flex: 1 1 130px; }
@@ -805,3 +805,14 @@ html:root body .tk-link-row input { max-width: 520px; }
   .tk-fields { padding: 8px 12px; }
   html:root body .tk-link-row input { max-width: none; }
 }
+
+/* ---- Gantt: the menu a right-click on a bar opens ---- */
+.tk-gantt-menu {
+  position: fixed; z-index: 60; display: grid; gap: 2px; min-width: 180px; padding: 6px;
+  background: var(--content-panel); border: 1px solid var(--tk-line); border-radius: var(--panel-radius); box-shadow: var(--menu-shadow);
+}
+html:root .tk-gantt-menu button {
+  display: flex; align-items: center; width: 100%; min-height: 36px; padding: 6px 10px; text-align: start;
+  font: 525 14px/1.4 var(--font-body); color: var(--text); background: none; border: 0; border-radius: var(--control-radius); cursor: pointer;
+}
+html:root .tk-gantt-menu button:hover, html:root .tk-gantt-menu button:focus-visible { background: var(--tk-soft); outline: 0; }

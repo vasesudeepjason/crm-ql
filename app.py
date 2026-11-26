@@ -4995,7 +4995,7 @@ def task_create():
 
 
 _ISO_DAY = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-_TASK_DATE_EVENTS = ("scheduled this task for ", "set start date to ", "set due date to ")
+_TASK_DATE_EVENTS = ("scheduled this task for ", "set start date to ", "set due date to ", "updated the description")
 
 
 def _plain_day(match):
@@ -5029,8 +5029,9 @@ def task_detail(task_id):
             days.append({"label": label, "events": []})
         body, topic = row["body"], None
         if row["kind"] != "comment":
-            body = _ISO_DAY.sub(_plain_day, body)
             topic = next((p for p in _TASK_DATE_EVENTS if body.startswith(p)), None)
+            if topic and " date to " in topic:   # only date lines; a file name can hold a date too
+                body = _ISO_DAY.sub(_plain_day, body)
             # Several date changes in a row by one person read as a single line: keep the latest.
             last = days[-1]["events"][-1] if days[-1]["events"] else None
             if topic and last and last["topic"] == topic and last["user_id"] == row["user_id"] \
@@ -5335,7 +5336,8 @@ def task_set_dates(task_id):
     except (KeyError, ValueError):
         abort(400)
     if (start, start_time, due, due_time) != (task["start_date"], task["start_time"], task["due_date"], task["due_time"]):
-        _log_task_event(db, task_id, "scheduled this task for " + _schedule_label(start, start_time, due, due_time))
+        _log_task_event(db, task_id, "scheduled this task for " + _schedule_label(start, start_time, due, due_time)
+                        if start or due else "took this task off the schedule")
         db.execute("UPDATE work_tasks SET start_date=?, start_time=?, due_date=?, due_time=?, updated_at=? WHERE id=?",
                    (start, start_time, due, due_time, now_str(), task_id))
         db.commit()
